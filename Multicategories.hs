@@ -91,6 +91,8 @@ data Swap :: [a] -> [a] -> * where
 class Multicategory f => Symmetric f where
   swap :: Swap as bs -> f as o -> f bs o
 
+-- TODO: Cartesian Multicategories
+
 --------------------------------------------------------------------------------
 -- * Endo
 --------------------------------------------------------------------------------
@@ -114,6 +116,8 @@ instance Multicategory Endo where
     go (Endo gg g :- gs) v = case splitRec gg v of
       (l,r) -> Identity (g l) :& go gs r
     go Nil RNil = RNil
+
+instance Symmetric Endo -- TODO
 
 --------------------------------------------------------------------------------
 -- * Free multicategory
