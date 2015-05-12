@@ -17,6 +17,11 @@ import GHC.TypeLits
 import Unsafe.Coerce
 import Prelude hiding ((++), id, (.))
 
+--------------------------------------------------------------------------------
+-- * Records
+--------------------------------------------------------------------------------
+
+-- | Note: @Rec Proxy is@ a natural number we can do induction on.
 data Rec :: (k -> *) -> [k] -> * where
   RNil :: Rec f '[]
   (:&) :: !(f a) -> !(Rec f as) -> Rec f (a ': as)
@@ -33,12 +38,16 @@ rmap :: (forall a. f a -> g a) -> Rec f as -> Rec g as
 rmap _ RNil = RNil
 rmap f (a :& as) = f a :& rmap f as
 
+--------------------------------------------------------------------------------
+-- * Variants
+--------------------------------------------------------------------------------
+
 data Variant :: (k -> *) -> [k] -> * where
   Head :: f a -> Variant f (a ': as)
   Tail :: Variant f as -> Variant f (a ': as)
 
 --------------------------------------------------------------------------------
--- * Graded
+-- * Graded structures
 --------------------------------------------------------------------------------
 
 class Graded f where
