@@ -30,6 +30,9 @@ type family (++) (a :: [k]) (b :: [k]) :: [k]
 type instance '[] ++ bs = bs
 type instance (a ': as) ++ bs = a ': (as ++ bs)
 
+appendNilAxiom :: forall as. Dict (as ~ (as ++ '[]))
+appendNilAxiom = unsafeCoerce (Dict :: Dict (as ~ as))
+
 rappend :: Rec f as -> Rec f bs -> Rec f (as ++ bs)
 rappend RNil bs      = bs
 rappend (a :& as) bs = a :& rappend as bs
@@ -136,14 +139,15 @@ instance Symmetric Endo -- TODO
 data Free :: ([k] -> k -> *) -> [k] -> k -> * where
   Ident :: Free f '[a] a
   Apply :: f bs c -> Args (Free f) as bs -> Free f as c
-  
+
 instance Graded f => Graded (Free f) where
   grade Ident = Proxy :& RNil
   grade (Apply _ as) = gradeArgs as
 
 instance Graded f => Multicategory (Free f) where
   ident = Ident
-  compose Ident (a :- Nil) = unsafeCoerce a -- TODO: fix
+  compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of
+     Dict -> a
   compose (Apply f0 as0) bs0 = Apply f0 $ go as0 bs0 where
     go :: Args (Free f) bs cs -> Args (Free f) as bs -> Args (Free f) as cs
     go (f :- fs) as = error "TODO"
@@ -156,12 +160,12 @@ instance Graded f => Multicategory (Free f) where
 
 data Atkey a i j where
   Atkey :: a -> Atkey a i i
- 
+
 --------------------------------------------------------------------------------
--- * (Co)monads from a planar operad
+-- * The monad attached to a planar operad
 --------------------------------------------------------------------------------
 
--- The monad associated with an operad. This generalizes the notion of the writer monad to an arbitrary operad
+-- The monad attached to an operad. This generalizes the notion of the writer monad to an arbitrary operad
 data M (f :: [()] -> () -> *) (a :: *) where
   M :: f is '() -> Rec (Atkey a '()) is -> M f a
 
@@ -174,13 +178,22 @@ instance Multicategory f => Applicative (M f) where
 
 instance Multicategory f => Monad (M f) where
   return a = M ident (Atkey a :& RNil)
-  (>>=) = bind where
-    bind :: forall a b. M f a -> (a -> M f b) -> M f b
-    bind (M s0 d0) f = go d0 $ \ as ds -> M (compose s0 as) ds where
-      go :: Rec (Atkey a '()) is -> (forall os. Args f os is -> Rec (Atkey b '()) os -> r) -> r
-      go RNil k = k Nil RNil
-      go (Atkey a :& is) k = go is $ \fs as -> case f a of
-        M s bs -> k (s :- fs) (rappend bs as)
+  M s0 d0 >>= (f :: a -> M f b) = go d0 $ \ as ds -> M (compose s0 as) ds where
+    go :: Rec (Atkey a '()) is -> (forall os. Args f os is -> Rec (Atkey b '()) os -> r) -> r
+    go RNil k = k Nil RNil
+    go (Atkey a :& is) k = go is $ \fs as -> case f a of
+      M s bs -> k (s :- fs) (rappend bs as)
+
+--------------------------------------------------------------------------------
+-- * Algebras over a Operad
+--------------------------------------------------------------------------------
+
+type OperadAlgebra f a = M f a -> a
+type OperadCoalgebra f a = a -> M f a
+
+--------------------------------------------------------------------------------
+-- * The comonad associated with an operad.
+--------------------------------------------------------------------------------
 
 -- The comonad associated with an operad
 newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec (Atkey a '()) is } -- Coatkey?
@@ -191,16 +204,47 @@ instance Functor (W f) where
 instance Multicategory f => Comonad (W f) where
   extract (W f) = case f ident of
     Atkey a :& RNil -> a
+{-
+  duplicate (w :: W f a) = W go where
+    go :: f is '() -> Rec (Atkey (W f a) '()) is
+    go s = (\s d -> go
+  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
+-}
 
 --------------------------------------------------------------------------------
 -- * Indexed (Co)monads from a Multicategory
 --------------------------------------------------------------------------------
 
+type f ~> g = forall a. f a -> g a
+infixr 0 ~>
+
+class IFunctor m where
+  imap :: (a ~> b) -> m a ~> m b
+
+class IFunctor m => IMonad m where
+  ireturn :: a ~> m a
+  ibind :: (a ~> m b) -> (m a ~> m b)
+
 -- a mcbride-style indexed monad associated with a multicategory
 data IM (f :: [k] -> k -> *) (a :: k -> *) (o :: k) where
   IM :: f is o -> Rec a is -> IM f a o
 
+instance IFunctor (IM f) where
+  imap f (IM s d) = IM s (rmap f d)
+
+instance Multicategory f => IMonad (IM f) where
+  ireturn a = IM ident (a :& RNil)
+  ibind (f :: a ~> IM f b) (IM s0 d0) = go d0 $ \ as ds -> IM (compose s0 as) ds where
+    go :: Rec a is -> (forall os. Args f os is -> Rec b os -> r) -> r
+    go RNil k = k Nil RNil
+    go (a :& is) k = go is $ \fs as -> case f a of
+      IM s bs -> k (s :- fs) (rappend bs as)
+
 -- instance Multicategory f => IMonad (IM f)
+
+class IFunctor w => IComonad w where
+  iextract :: w a ~> a
+  ibind :: (w a ~> b) -> (w a ~> w b)
 
 -- an indexed comonad associated with a multicategory
 newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
@@ -238,6 +282,11 @@ instance Category p => Multicategory (C p) where
 
 instance Category p => Symmetric (C p) where
   swap = error "The permutations of 1 element are trivial. How did you get here?"
+
+--------------------------------------------------------------------------------
+-- * A category over an operad
+--------------------------------------------------------------------------------
+-- http://ncatlab.org/nlab/show/category+over+an+operad
 
 -- we could model a category with object constraints with something simple like:
 
