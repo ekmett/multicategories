@@ -31,10 +31,6 @@ type family (++) (a :: [k]) (b :: [k]) :: [k]
 type instance '[] ++ bs = bs
 type instance (a ': as) ++ bs = a ': (as ++ bs)
 
--- type family (+-) (a :: [k]) (b :: [k]) :: [k]
--- type instance as +- '[] = as
--- type instance (i:is) +- (i:js) = is +- js
-
 appendNilAxiom :: forall as. Dict (as ~ (as ++ '[]))
 appendNilAxiom = unsafeCoerce (Dict :: Dict (as ~ as))
 
@@ -274,7 +270,6 @@ newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is
 
 instance IFunctor (IW f) where
   imap f (IW g) = IW $ \s -> rmap f (g s)
-
 
 instance Multicategory f => IComonad (IW f) where
   iextract (IW f) = case f ident of
