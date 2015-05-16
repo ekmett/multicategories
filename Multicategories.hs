@@ -34,6 +34,9 @@ type instance (a ': as) ++ bs = a ': (as ++ bs)
 appendNilAxiom :: forall as. Dict (as ~ (as ++ '[]))
 appendNilAxiom = unsafeCoerce (Dict :: Dict (as ~ as))
 
+appendAssoc :: forall p q r as bs cs. p as -> q bs -> r cs -> Dict ((as ++ (bs ++ cs)) ~ ((as ++ bs) ++ cs))
+appendAssoc _ _ _ = unsafeCoerce (Dict :: Dict (as ~ as))
+
 rappend :: Rec f as -> Rec f bs -> Rec f (as ++ bs)
 rappend RNil bs      = bs
 rappend (a :& as) bs = a :& rappend as bs
@@ -86,16 +89,18 @@ data Args :: ([k] -> k -> *) -> [k] -> [k] -> * where
   Nil  :: Args f '[] '[]
   (:-) :: f is o -> Args f js os -> Args f (is ++ js) (o ': os)
 
-data SplitArgs :: ([k] -> k -> *) -> [k] -> [k] -> [k] -> *  where
-  SplitArgs :: Args g as bs -> Args g cs ds -> SplitArgs g (as ++ cs) bs ds
+--data SplitArgs :: ([k] -> k -> *) -> [k] -> [k] -> [k] -> *  where
+--  SplitArgs :: Args g as bs -> Args g cs ds -> SplitArgs g (as ++ cs) bs ds
 
--- splitArgs :: Rec f is -> Args g as (is ++ js) -> (forall bs cs. (as ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
--- splitArgs RNil as k = k Nil as
--- splitArgs (i :& is) (j :- js) k = splitArgs is js $ \ l r -> k (j :- l) r
+splitArgs :: forall f g as is js os r. Rec f is -> Args g js os -> Args g as (is ++ js) -> (forall bs cs. (as ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
+splitArgs RNil bs as k = k Nil as
+splitArgs (i :& is) bs ((j :: g is1 o) :- js) k = splitArgs is bs js $ \ (l :: Args g bs as1) (r :: Args g cs js) ->
+  case appendAssoc (Proxy :: Proxy is1) (Proxy :: Proxy bs) (Proxy :: Proxy cs) of
+    Dict -> k (j :- l) r
 
 instance Multicategory f => Semigroupoid (Args f) where
   o Nil Nil = Nil
-  -- o (b :- bs) as = splitArgs (grade b) $ \es fs -> compose b es :- o bs fs
+  o (b :- bs) as = splitArgs (grade b) bs as $ \es fs -> compose b es :- o bs fs
 
 instance (Multicategory f, KnownGrade is) => Ob (Args f) is where
   semiid = idents gradeVal
