@@ -89,9 +89,6 @@ data Args :: ([k] -> k -> *) -> [k] -> [k] -> * where
   Nil  :: Args f '[] '[]
   (:-) :: f is o -> Args f js os -> Args f (is ++ js) (o ': os)
 
---data SplitArgs :: ([k] -> k -> *) -> [k] -> [k] -> [k] -> *  where
---  SplitArgs :: Args g as bs -> Args g cs ds -> SplitArgs g (as ++ cs) bs ds
-
 splitArgs :: forall f g as is js os r. Rec f is -> Args g js os -> Args g as (is ++ js) -> (forall bs cs. (as ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
 splitArgs RNil bs as k = k Nil as
 splitArgs (i :& is) bs ((j :: g is1 o) :- js) k = splitArgs is bs js $ \ (l :: Args g bs as1) (r :: Args g cs js) ->
