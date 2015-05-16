@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds, RankNTypes, TypeOperators, KindSignatures, GADTs, ScopedTypeVariables, PolyKinds, TypeFamilies #-}
+{-# LANGUAGE DataKinds, RankNTypes, TypeOperators, KindSignatures, GADTs, ScopedTypeVariables, PolyKinds, TypeFamilies, FlexibleInstances, MultiParamTypeClasses #-}
 module Multicategories where
 
 import Control.Applicative
@@ -11,6 +11,7 @@ import Data.Functor.Identity
 import Data.Functor.Rep
 import Data.Proxy
 import Data.Semigroupoid
+import Data.Semigroupoid.Ob
 import Data.Vector as Vector
 import Data.Vector.Mutable as Mutable
 import GHC.TypeLits
@@ -21,7 +22,7 @@ import Prelude hiding ((++), id, (.))
 -- * Records
 --------------------------------------------------------------------------------
 
--- | Note: @Rec Proxy is@ a natural number we can do induction on.
+-- | Note: @Rec Proxy is@ is a natural number we can do induction on.
 data Rec :: (k -> *) -> [k] -> * where
   RNil :: Rec f '[]
   (:&) :: !(f a) -> !(Rec f as) -> Rec f (a ': as)
@@ -29,6 +30,10 @@ data Rec :: (k -> *) -> [k] -> * where
 type family (++) (a :: [k]) (b :: [k]) :: [k]
 type instance '[] ++ bs = bs
 type instance (a ': as) ++ bs = a ': (as ++ bs)
+
+-- type family (+-) (a :: [k]) (b :: [k]) :: [k]
+-- type instance as +- '[] = as
+-- type instance (i:is) +- (i:js) = is +- js
 
 appendNilAxiom :: forall as. Dict (as ~ (as ++ '[]))
 appendNilAxiom = unsafeCoerce (Dict :: Dict (as ~ as))
@@ -41,13 +46,25 @@ rmap :: (forall a. f a -> g a) -> Rec f as -> Rec g as
 rmap _ RNil = RNil
 rmap f (a :& as) = f a :& rmap f as
 
+splitRec :: Rec f is -> Rec g (is ++ js) -> (Rec g is, Rec g js)
+splitRec RNil    as        = (RNil, as)
+splitRec (_ :& is) (a :& as) = case splitRec is as of
+  (l,r) -> (a :& l, r)
+
 --------------------------------------------------------------------------------
 -- * Variants
 --------------------------------------------------------------------------------
 
 data Variant :: (k -> *) -> [k] -> * where
-  Head :: f a -> Variant f (a ': as)
-  Tail :: Variant f as -> Variant f (a ': as)
+  Variant :: Selector f as a -> Variant f as
+
+data Selector :: (k -> *) -> [k] -> k -> * where
+  Head :: f a -> Selector f (a ': as) a
+  Tail :: Selector f as b -> Selector f (a ': as) b
+
+selectors :: Rec f as -> Rec (Selector f as) as
+selectors RNil      = RNil
+selectors (a :& as) = Head a :& rmap Tail (selectors as)
 
 --------------------------------------------------------------------------------
 -- * Graded structures
@@ -71,7 +88,25 @@ instance KnownGrade is => KnownGrade (i ': is) where
 
 data Args :: ([k] -> k -> *) -> [k] -> [k] -> * where
   Nil  :: Args f '[] '[]
-  (:-) :: f i o -> Args f is os -> Args f (i ++ is) (o ': os)
+  (:-) :: f is o -> Args f js os -> Args f (is ++ js) (o ': os)
+
+data SplitArgs :: ([k] -> k -> *) -> [k] -> [k] -> [k] -> *  where
+  SplitArgs :: Args g as bs -> Args g cs ds -> SplitArgs g (as ++ cs) bs ds
+
+-- splitArgs :: Rec f is -> Args g as (is ++ js) -> (forall bs cs. (as ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
+-- splitArgs RNil as k = k Nil as
+-- splitArgs (i :& is) (j :- js) k = splitArgs is js $ \ l r -> k (j :- l) r
+
+instance Multicategory f => Semigroupoid (Args f) where
+  o Nil Nil = Nil
+  -- o (b :- bs) as = splitArgs (grade b) $ \es fs -> compose b es :- o bs fs
+
+instance (Multicategory f, KnownGrade is) => Ob (Args f) is where
+  semiid = idents gradeVal
+
+idents :: Multicategory f => Rec Proxy is -> Args f is is
+idents (a :& as) = ident :- idents as
+idents RNil      = Nil
 
 infixr 5 :-
 
@@ -116,11 +151,6 @@ data Endo is o where
 instance Graded Endo where
   grade (Endo g _) = g
 
-splitRec :: Rec f is -> Rec g (is ++ js) -> (Rec g is, Rec g js)
-splitRec RNil    as        = (RNil, as)
-splitRec (_ :& is) (a :& as) = case splitRec is as of
-  (l,r) -> (a :& l, r)
-
 instance Multicategory Endo where
   ident = Endo gradeVal $ \(Identity a :& RNil) -> a
   compose (Endo _ f) as = Endo (gradeArgs as) $ \v -> f $ go as v where
@@ -146,8 +176,7 @@ instance Graded f => Graded (Free f) where
 
 instance Graded f => Multicategory (Free f) where
   ident = Ident
-  compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of
-     Dict -> a
+  compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of Dict -> a
   compose (Apply f0 as0) bs0 = Apply f0 $ go as0 bs0 where
     go :: Args (Free f) bs cs -> Args (Free f) as bs -> Args (Free f) as cs
     go (f :- fs) as = error "TODO"
@@ -204,18 +233,12 @@ instance Functor (W f) where
 instance Multicategory f => Comonad (W f) where
   extract (W f) = case f ident of
     Atkey a :& RNil -> a
-{-
-  duplicate (w :: W f a) = W go where
-    go :: f is '() -> Rec (Atkey (W f a) '()) is
-    go s = (\s d -> go
-  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
--}
 
 --------------------------------------------------------------------------------
 -- * Indexed (Co)monads from a Multicategory
 --------------------------------------------------------------------------------
 
-type f ~> g = forall a. f a -> g a
+type (f :: k -> *) ~> (g :: k -> *) = forall (a :: k). f a -> g a
 infixr 0 ~>
 
 class IFunctor m where
@@ -244,12 +267,24 @@ instance Multicategory f => IMonad (IM f) where
 
 class IFunctor w => IComonad w where
   iextract :: w a ~> a
-  ibind :: (w a ~> b) -> (w a ~> w b)
+  iextend  :: (w a ~> b) -> (w a ~> w b)
 
 -- an indexed comonad associated with a multicategory
 newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
 
 -- instance Multicategory f => IComonad (IW f)
+
+instance IFunctor (IW f) where
+  imap f (IW g) = IW $ \s -> rmap f (g s)
+
+
+instance Multicategory f => IComonad (IW f) where
+  iextract (IW f) = case f ident of
+    a :& RNil -> a
+  iextend (f :: IW f a ~> b) (IW w) = IW $ \s -> go (grade s) s where
+    go :: Rec Proxy is -> f is a1 -> Rec b is
+    go gs s = undefined
+  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
 
 --------------------------------------------------------------------------------
 -- * A category obtained by keeping only 1-argument multimorphisms
