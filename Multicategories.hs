@@ -60,21 +60,6 @@ splitRec (_ :& is) (a :& as) = case splitRec is as of
   (l,r) -> (a :& l, r)
 
 --------------------------------------------------------------------------------
--- * Variants
---------------------------------------------------------------------------------
-
-data Variant :: (k -> *) -> [k] -> * where
-  Variant :: Selector f as a -> Variant f as
-
-data Selector :: (k -> *) -> [k] -> k -> * where
-  Head :: f a -> Selector f (a ': as) a
-  Tail :: Selector f as b -> Selector f (a ': as) b
-
-selectors :: Rec f as -> Rec (Selector f as) as
-selectors RNil      = RNil
-selectors (a :& as) = Head a :& rmap Tail (selectors as)
-
---------------------------------------------------------------------------------
 -- * Graded structures
 --------------------------------------------------------------------------------
 
@@ -99,7 +84,7 @@ data Args :: ([k] -> k -> *) -> [k] -> [k] -> * where
   Nil  :: Args f '[] '[]
   (:-) :: f is o -> Args f js os -> Args f (is ++ js) (o ': os)
 
-infixr 5 :-
+infixr 5 :-, :&
 
 foldrArgs :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Args f m n -> r m
 foldrArgs _ z Nil = z
@@ -140,8 +125,16 @@ idents RNil      = Nil
 
 -- | generators for the symmetric groupoid Sigma_k
 data Swap :: [a] -> [a] -> * where
-  Swap :: Swap (a ': b ': as) (a ': b ': bs)
+  Swap :: Swap (a ': b ': bs) (b ': a ': bs)
   Skip :: Swap as bs -> Swap (a ': as) (a ': bs)
+
+swapRec :: Swap as bs -> Rec f as -> Rec f bs
+swapRec (Skip s) (i :& is)      = i :& swapRec s is
+swapRec Swap     (i :& j :& is) = j :& i :& is
+
+unswapRec :: Swap bs as -> Rec f as -> Rec f bs
+unswapRec (Skip s) (i :& is)      = i :& unswapRec s is
+unswapRec Swap     (i :& j :& is) = j :& i :& is
 
 class Multicategory f => Symmetric f where
   swap :: Swap as bs -> f as o -> f bs o
@@ -167,7 +160,8 @@ instance Multicategory Endo where
       (l,r) -> Identity (g l) :& go gs r
     go Nil RNil = RNil
 
-instance Symmetric Endo -- TODO
+instance Symmetric Endo where -- TODO
+  swap s (Endo g f) = Endo (swapRec s g) (f . unswapRec s)
 
 --------------------------------------------------------------------------------
 -- * Free multicategory
@@ -186,6 +180,9 @@ instance Graded f => Multicategory (Free f) where
   ident = Ident
   compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of Dict -> a
   compose (Apply f as) bs = Apply f (o as bs)
+
+instance Symmetric f => Symmetric (Free f) where
+  -- swap s (Apply f as) = Apply (swap s f) (swapArgs s as)
 
 --------------------------------------------------------------------------------
 -- * Kleisli arrows of outrageous fortune
@@ -225,21 +222,7 @@ type OperadAlgebra f a = M f a -> a
 type OperadCoalgebra f a = a -> M f a
 
 --------------------------------------------------------------------------------
--- * The comonad associated with an operad.
---------------------------------------------------------------------------------
-
--- The comonad associated with an operad
-newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec (Atkey a '()) is } -- Coatkey?
-
-instance Functor (W f) where
-  fmap f (W g) = W (rmap (\(Atkey a) -> Atkey (f a)) . g)
-
-instance Multicategory f => Comonad (W f) where
-  extract (W f) = case f ident of
-    Atkey a :& RNil -> a
-
---------------------------------------------------------------------------------
--- * Indexed (Co)monads from a Multicategory
+-- * Indexed Monads from a Multicategory
 --------------------------------------------------------------------------------
 
 type (f :: k -> *) ~> (g :: k -> *) = forall (a :: k). f a -> g a
@@ -252,7 +235,7 @@ class IFunctor m => IMonad m where
   ireturn :: a ~> m a
   ibind :: (a ~> m b) -> (m a ~> m b)
 
--- a mcbride-style indexed monad associated with a multicategory
+-- | A McBride-style indexed monad associated with a multicategory
 data IM (f :: [k] -> k -> *) (a :: k -> *) (o :: k) where
   IM :: f is o -> Rec a is -> IM f a o
 
@@ -266,28 +249,6 @@ instance Multicategory f => IMonad (IM f) where
     go RNil k = k Nil RNil
     go (a :& is) k = go is $ \fs as -> case f a of
       IM s bs -> k (s :- fs) (rappend bs as)
-
--- instance Multicategory f => IMonad (IM f)
-
-class IFunctor w => IComonad w where
-  iextract :: w a ~> a
-  iextend  :: (w a ~> b) -> (w a ~> w b)
-
--- an indexed comonad associated with a multicategory
-newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
-
--- instance Multicategory f => IComonad (IW f)
-
-instance IFunctor (IW f) where
-  imap f (IW g) = IW $ \s -> rmap f (g s)
-
-instance Multicategory f => IComonad (IW f) where
-  iextract (IW f) = case f ident of
-    a :& RNil -> a
-  iextend (f :: IW f a ~> b) (IW w) = IW $ \s -> go (grade s) s where
-    go :: Rec Proxy is -> f is a1 -> Rec b is
-    go gs s = undefined
-  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
 
 --------------------------------------------------------------------------------
 -- * A category obtained by keeping only 1-argument multimorphisms
@@ -320,6 +281,62 @@ instance Category p => Multicategory (C p) where
 
 instance Category p => Symmetric (C p) where
   swap = error "The permutations of 1 element are trivial. How did you get here?"
+
+--------------------------------------------------------------------------------
+-- * Variants
+--------------------------------------------------------------------------------
+
+data Variant :: (k -> *) -> [k] -> * where
+  Variant :: Selector f as a -> Variant f as
+
+data Selector :: (k -> *) -> [k] -> k -> * where
+  Head :: f a -> Selector f (a ': as) a
+  Tail :: Selector f as b -> Selector f (a ': as) b
+
+selectors :: Rec f as -> Rec (Selector f as) as
+selectors RNil      = RNil
+selectors (a :& as) = Head a :& rmap Tail (selectors as)
+
+--------------------------------------------------------------------------------
+-- * The comonad associated with an operad.
+--------------------------------------------------------------------------------
+
+-- The comonad associated with an operad
+newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec (Atkey a '()) is } -- Coatkey?
+
+instance Functor (W f) where
+  fmap f (W g) = W (rmap (\(Atkey a) -> Atkey (f a)) . g)
+
+instance Multicategory f => Comonad (W f) where
+  extract (W f) = case f ident of
+    Atkey a :& RNil -> a
+
+--------------------------------------------------------------------------------
+-- * Indexed Monads from a Multicategory
+--------------------------------------------------------------------------------
+
+-- instance Multicategory f => IMonad (IM f)
+
+class IFunctor w => IComonad w where
+  iextract :: w a ~> a
+  iextend  :: (w a ~> b) -> (w a ~> w b)
+
+-- an indexed comonad associated with a multicategory
+newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
+
+-- instance Multicategory f => IComonad (IW f)
+
+instance IFunctor (IW f) where
+  imap f (IW g) = IW $ \s -> rmap f (g s)
+
+instance Multicategory f => IComonad (IW f) where
+  iextract (IW f) = case f ident of
+    a :& RNil -> a
+  iextend (f :: IW f a ~> b) (IW w) = IW $ \s -> go (grade s) s where
+    go :: Rec Proxy is -> f is a1 -> Rec b is
+    go gs s = undefined
+  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
+
 
 --------------------------------------------------------------------------------
 -- * A category over an operad
