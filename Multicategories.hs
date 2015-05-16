@@ -19,6 +19,22 @@ import Unsafe.Coerce
 import Prelude hiding ((++), id, (.))
 
 --------------------------------------------------------------------------------
+-- * (Erasable) Type-Level Lists
+--------------------------------------------------------------------------------
+
+type family (++) (a :: [k]) (b :: [k]) :: [k]
+type instance '[] ++ bs = bs
+type instance (a ': as) ++ bs = a ': (as ++ bs)
+
+-- | Proof provided by every single class on theorem proving in the last 20 years.
+appendNilAxiom :: forall as. Dict (as ~ (as ++ '[]))
+appendNilAxiom = unsafeCoerce (Dict :: Dict (as ~ as))
+
+-- | Proof provided by every single class on theorem proving in the last 20 years.
+appendAssocAxiom :: forall p q r as bs cs. p as -> q bs -> r cs -> Dict ((as ++ (bs ++ cs)) ~ ((as ++ bs) ++ cs))
+appendAssocAxiom _ _ _ = unsafeCoerce (Dict :: Dict (as ~ as))
+
+--------------------------------------------------------------------------------
 -- * Records
 --------------------------------------------------------------------------------
 
@@ -27,24 +43,17 @@ data Rec :: (k -> *) -> [k] -> * where
   RNil :: Rec f '[]
   (:&) :: !(f a) -> !(Rec f as) -> Rec f (a ': as)
 
-type family (++) (a :: [k]) (b :: [k]) :: [k]
-type instance '[] ++ bs = bs
-type instance (a ': as) ++ bs = a ': (as ++ bs)
-
-appendNilAxiom :: forall as. Dict (as ~ (as ++ '[]))
-appendNilAxiom = unsafeCoerce (Dict :: Dict (as ~ as))
-
-appendAssoc :: forall p q r as bs cs. p as -> q bs -> r cs -> Dict ((as ++ (bs ++ cs)) ~ ((as ++ bs) ++ cs))
-appendAssoc _ _ _ = unsafeCoerce (Dict :: Dict (as ~ as))
-
+-- | Append two records
 rappend :: Rec f as -> Rec f bs -> Rec f (as ++ bs)
 rappend RNil bs      = bs
 rappend (a :& as) bs = a :& rappend as bs
 
+-- | Map over a record
 rmap :: (forall a. f a -> g a) -> Rec f as -> Rec g as
 rmap _ RNil = RNil
 rmap f (a :& as) = f a :& rmap f as
 
+-- | Split a record
 splitRec :: Rec f is -> Rec g (is ++ js) -> (Rec g is, Rec g js)
 splitRec RNil    as        = (RNil, as)
 splitRec (_ :& is) (a :& as) = case splitRec is as of
@@ -85,15 +94,34 @@ instance KnownGrade is => KnownGrade (i ': is) where
 -- * Arguments for a multicategory form a polycategory
 --------------------------------------------------------------------------------
 
+-- | Each 'Multicategory' is a contravariant functor in @'Args' f@ in its first argument.
 data Args :: ([k] -> k -> *) -> [k] -> [k] -> * where
   Nil  :: Args f '[] '[]
   (:-) :: f is o -> Args f js os -> Args f (is ++ js) (o ': os)
 
-splitArgs :: forall f g as is js os r. Rec f is -> Args g js os -> Args g as (is ++ js) -> (forall bs cs. (as ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
+infixr 5 :-
+
+foldrArgs :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Args f m n -> r m
+foldrArgs _ z Nil = z
+foldrArgs f z (a :- as) = f a (foldrArgs f z as)
+
+gradeArgs :: Graded f => Args f is os -> Rec Proxy is
+gradeArgs = foldrArgs (\a r -> grade a `rappend` r) RNil
+
+splitArgs :: forall f g ds is js os r. Rec f is -> Args g js os -> Args g ds (is ++ js) -> (forall bs cs. (ds ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
 splitArgs RNil bs as k = k Nil as
-splitArgs (i :& is) bs ((j :: g is1 o) :- js) k = splitArgs is bs js $ \ (l :: Args g bs as1) (r :: Args g cs js) ->
-  case appendAssoc (Proxy :: Proxy is1) (Proxy :: Proxy bs) (Proxy :: Proxy cs) of
+splitArgs (i :& is) bs ((j :: g as o) :- js) k = splitArgs is bs js $ \ (l :: Args g bs as1) (r :: Args g cs js) ->
+  case appendAssocAxiom (Proxy :: Proxy as) (Proxy :: Proxy bs) (Proxy :: Proxy cs) of
     Dict -> k (j :- l) r
+
+--------------------------------------------------------------------------------
+-- * Multicategories
+--------------------------------------------------------------------------------
+
+-- | multicategory / planar colored operad
+class Graded f => Multicategory f where
+  ident   :: f '[a] a
+  compose :: f bs c -> Args f as bs -> f as c
 
 instance Multicategory f => Semigroupoid (Args f) where
   o Nil Nil = Nil
@@ -105,24 +133,6 @@ instance (Multicategory f, KnownGrade is) => Ob (Args f) is where
 idents :: Multicategory f => Rec Proxy is -> Args f is is
 idents (a :& as) = ident :- idents as
 idents RNil      = Nil
-
-infixr 5 :-
-
-foldrArgs :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Args f m n -> r m
-foldrArgs _ z Nil = z
-foldrArgs f z (a :- as) = f a (foldrArgs f z as)
-
-gradeArgs :: Graded f => Args f is os -> Rec Proxy is
-gradeArgs = foldrArgs (\a r -> grade a `rappend` r) RNil
-
---------------------------------------------------------------------------------
--- * Multicategories
---------------------------------------------------------------------------------
-
--- | multicategory / planar colored operad
-class Graded f => Multicategory f where
-  ident   :: f '[a] a
-  compose :: f bs c -> Args f as bs -> f as c
 
 --------------------------------------------------------------------------------
 -- * Symmetric Multicategories
@@ -176,8 +186,6 @@ instance Graded f => Multicategory (Free f) where
   ident = Ident
   compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of Dict -> a
   compose (Apply f as) bs = Apply f (o as bs)
-
--- each operad is a contravariant functor in (Args f) in its first argument, and covariant in (Op f) in its second
 
 --------------------------------------------------------------------------------
 -- * Kleisli arrows of outrageous fortune
