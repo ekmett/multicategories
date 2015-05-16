@@ -177,9 +177,7 @@ instance Graded f => Graded (Free f) where
 instance Graded f => Multicategory (Free f) where
   ident = Ident
   compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of Dict -> a
-  compose (Apply f0 as0) bs0 = Apply f0 $ go as0 bs0 where
-    go :: Args (Free f) bs cs -> Args (Free f) as bs -> Args (Free f) as cs
-    go (f :- fs) as = error "TODO"
+  compose (Apply f as) bs = Apply f (o as bs)
 
 -- each operad is a contravariant functor in (Args f) in its first argument, and covariant in (Op f) in its second
 
