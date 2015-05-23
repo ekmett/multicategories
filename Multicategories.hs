@@ -351,24 +351,24 @@ data Variant :: (k -> *) -> [k] -> * where
   Variant :: Selector as a -> f a -> Variant f as
 
 data Selector :: [k] -> k -> * where
-  Head :: Rec Proxy (a ': as) -> Selector (a ': as) a
-  Tail :: Selector as b       -> Selector (a ': as) b
+  Head :: Rec Proxy as  -> Selector (a ': as) a
+  Tail :: Selector as b -> Selector (a ': as) b
 
 selectors :: Rec f as -> Rec (Selector as) as
 selectors RNil      = RNil
-selectors (a :& as) = Head (Proxy :& rmap (const Proxy) as) :& rmap Tail (selectors as)
+selectors (a :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
 
 instance Graded Selector where
   grade (Tail as) = Proxy :& grade as
-  grade (Head as) = as
+  grade (Head as) = Proxy :& as
 
 instance Multicategory Selector where
-  ident   = Head (Proxy :& RNil)
+  ident = Head RNil
   compose (Tail (as :: Selector os b)) (b :- (bs :: Forest Selector js os)) = go (grade b) where
     go :: Rec Proxy ks -> Selector (ks ++ js) b
     go RNil      = compose as bs
     go (c :& cs) = Tail (go cs)
-  compose (Head (as :: Rec Proxy (o ': os))) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
+  compose (Head (as :: Rec Proxy os)) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
     go :: forall ks. Selector ks o -> Selector (ks ++ js) o
     go (Tail cs) = Tail (go cs)
     go (Head cs) = Head (rappend cs (gradeForest bs))
