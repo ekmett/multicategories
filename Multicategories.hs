@@ -39,31 +39,31 @@ appendAssocAxiom _ _ _ = unsafeCoerce (Dict :: Dict (as ~ as))
 --------------------------------------------------------------------------------
 
 -- | Note: @Rec Proxy is@ is a natural number we can do induction on.
-data Rec :: (k -> *) -> [k] -> * where
-  RNil :: Rec f '[]
-  (:&) :: !(f a) -> !(Rec f as) -> Rec f (a ': as)
+data Rec :: [k] -> (k -> *) -> * where
+  RNil :: Rec '[] f
+  (:&) :: !(f a) -> !(Rec as f) -> Rec (a ': as) f
 
 -- | Append two records
-rappend :: Rec f as -> Rec f bs -> Rec f (as ++ bs)
+rappend :: Rec as f -> Rec bs f -> Rec (as ++ bs) f
 rappend RNil bs      = bs
 rappend (a :& as) bs = a :& rappend as bs
 
 -- | Map over a record
-rmap :: (forall a. f a -> g a) -> Rec f as -> Rec g as
+rmap :: (forall a. f a -> g a) -> Rec as f -> Rec as g
 rmap _ RNil = RNil
 rmap f (a :& as) = f a :& rmap f as
 
 -- | Split a record
-splitRec :: Rec f is -> Rec g (is ++ js) -> (Rec g is, Rec g js)
+splitRec :: Rec is f -> Rec (is ++ js) g -> (Rec is g, Rec js g)
 splitRec RNil    as        = (RNil, as)
 splitRec (_ :& is) (a :& as) = case splitRec is as of
   (l,r) -> (a :& l, r)
 
-foldrRec :: (forall i is. f i -> r is -> r (i ': is)) -> r '[] -> Rec f is -> r is
+foldrRec :: (forall i is. f i -> r is -> r (i ': is)) -> r '[] -> Rec is f -> r is
 foldrRec _ z RNil = z
 foldrRec f z (a :& as) = f a (foldrRec f z as)
 
-traverseRec :: Applicative m => (forall i. f i -> m (g i)) -> Rec f is -> m (Rec g is)
+traverseRec :: Applicative m => (forall i. f i -> m (g i)) -> Rec is f -> m (Rec is g)
 traverseRec f (a :& as) = (:&) <$> f a <*> traverseRec f as
 traverseRec f RNil = pure RNil
 
@@ -71,12 +71,15 @@ traverseRec f RNil = pure RNil
 -- * Graded structures
 --------------------------------------------------------------------------------
 
-class Graded (f :: [k] -> k -> *) where
-  grade :: f is o -> Rec Proxy is
+class Graded (f :: [i] -> j -> *) where
+  grade :: f is o -> Rec is Proxy
   {-# MINIMAL grade #-}
 
+instance Graded Rec where
+  grade = rmap (const Proxy)
+
 class KnownGrade is where
-  gradeVal :: Rec Proxy is
+  gradeVal :: Rec is Proxy
   {-# MINIMAL gradeVal #-}
 
 instance KnownGrade '[] where
@@ -96,14 +99,11 @@ data Forest :: ([k] -> k -> *) -> [k] -> [k] -> * where
 
 infixr 5 :-, :&
 
-foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest f m n -> r m
-foldrForest _ z Nil = z
-foldrForest f z (a :- as) = f a (foldrForest f z as)
+instance Graded f => Graded (Forest f) where
+  grade Nil = RNil
+  grade (a :- as) = grade a `rappend` grade as
 
-gradeForest :: Graded f => Forest f is os -> Rec Proxy is
-gradeForest = foldrForest (\a r -> grade a `rappend` r) RNil
-
-splitForest :: forall f g ds is js os r. Rec f is -> Forest g js os -> Forest g ds (is ++ js) -> (forall bs cs. (ds ~ (bs ++ cs)) => Forest g bs is -> Forest g cs js -> r) -> r
+splitForest :: forall f g ds is js os r. Rec is f -> Forest g js os -> Forest g ds (is ++ js) -> (forall bs cs. (ds ~ (bs ++ cs)) => Forest g bs is -> Forest g cs js -> r) -> r
 splitForest RNil bs as k = k Nil as
 splitForest (i :& is) bs ((j :: g as o) :- js) k = splitForest is bs js $ \ (l :: Forest g bs as1) (r :: Forest g cs js) ->
   case appendAssocAxiom (Proxy :: Proxy as) (Proxy :: Proxy bs) (Proxy :: Proxy cs) of
@@ -126,7 +126,7 @@ instance Multicategory f => Semigroupoid (Forest f) where
 instance (Multicategory f, KnownGrade is) => Ob (Forest f) is where
   semiid = idents gradeVal
 
-idents :: Multicategory f => Rec Proxy is -> Forest f is is
+idents :: Multicategory f => Rec is Proxy -> Forest f is is
 idents (a :& as) = ident :- idents as
 idents RNil      = Nil
 
@@ -139,11 +139,11 @@ data Swap :: [a] -> [a] -> * where
   Swap :: Swap (a ': b ': bs) (b ': a ': bs)
   Skip :: Swap as bs -> Swap (a ': as) (a ': bs)
 
-swapRec :: Swap as bs -> Rec f as -> Rec f bs
+swapRec :: Swap as bs -> Rec as f -> Rec bs f
 swapRec (Skip s) (i :& is)      = i :& swapRec s is
 swapRec Swap     (i :& j :& is) = j :& i :& is
 
-unswapRec :: Swap bs as -> Rec f as -> Rec f bs
+unswapRec :: Swap bs as -> Rec as f -> Rec bs f
 unswapRec (Skip s) (i :& is)      = i :& unswapRec s is
 unswapRec Swap     (i :& j :& is) = j :& i :& is
 
@@ -159,15 +159,15 @@ class Multicategory f => Symmetric f where
 
 -- | The endomorphism multicategory over a Hask; the multicategory represented by Hask.
 data Endo is o where
-  Endo :: !(Rec Proxy is) -> (Rec Identity is -> o) -> Endo is o
+  Endo :: !(Rec is Proxy) -> (Rec is Identity -> o) -> Endo is o
 
 instance Graded Endo where
   grade (Endo g _) = g
 
 instance Multicategory Endo where
   ident = Endo gradeVal $ \(Identity a :& RNil) -> a
-  compose (Endo _ f) as = Endo (gradeForest as) $ \v -> f $ go as v where
-    go :: Forest Endo is os -> Rec Identity is -> Rec Identity os
+  compose (Endo _ f) as = Endo (grade as) $ \v -> f $ go as v where
+    go :: Forest Endo is os -> Rec is Identity -> Rec os Identity
     go (Endo gg g :- gs) v = case splitRec gg v of
       (l,r) -> Identity (g l) :& go gs r
     go Nil RNil = RNil
@@ -186,7 +186,7 @@ data Free :: ([k] -> k -> *) -> [k] -> k -> * where
 
 instance Graded f => Graded (Free f) where
   grade Ident = Proxy :& RNil
-  grade (Apply _ as) = gradeForest as
+  grade (Apply _ as) = grade as
 
 instance Graded f => Multicategory (Free f) where
   ident = Ident
@@ -203,13 +203,16 @@ data Atkey a i j where
 amap :: (a -> b) -> Atkey a i j -> Atkey b i j
 amap f (Atkey a) = Atkey (f a)
 
+-- polykinded
+newtype Const a b = Const { getConst :: a }
+
 --------------------------------------------------------------------------------
 -- * The monad attached to a planar operad
 --------------------------------------------------------------------------------
 
 -- The monad attached to an operad. This generalizes the notion of the writer monad to an arbitrary operad
 data M (f :: [()] -> () -> *) (a :: *) where
-  M :: f is '() -> Rec (Atkey a '()) is -> M f a
+  M :: f is '() -> Rec is (Atkey a '()) -> M f a
 
 instance Functor (M f) where
   fmap f (M s d) = M s (rmap (\(Atkey a) -> Atkey (f a)) d)
@@ -221,7 +224,7 @@ instance Multicategory f => Applicative (M f) where
 instance Multicategory f => Monad (M f) where
   return a = M ident (Atkey a :& RNil)
   M s0 d0 >>= (f :: a -> M f b) = go d0 $ \ as ds -> M (compose s0 as) ds where
-    go :: Rec (Atkey a '()) is -> (forall os. Forest f os is -> Rec (Atkey b '()) os -> r) -> r
+    go :: Rec is (Atkey a '()) -> (forall os. Forest f os is -> Rec os (Atkey b '()) -> r) -> r
     go RNil k = k Nil RNil
     go (Atkey a :& is) k = go is $ \fs as -> case f a of
       M s bs -> k (s :- fs) (rappend bs as)
@@ -232,18 +235,16 @@ instance Foldable (M f) where
 instance Traversable (M f) where
   traverse f (M s d) = M s <$> traverseRec (\(Atkey a) -> Atkey <$> f a) d
 
--- polykinded Const
-newtype Const a b = Const { getConst :: a }
 
 --------------------------------------------------------------------------------
 -- * The monad transformer attached to a planar operad
 --------------------------------------------------------------------------------
 
 data T f g o where
-  T :: f is o -> g is -> T f g o
+  T :: f is o -> Rec is g -> T f g o
 
 -- This does not form a valid monad unless the monad @m@ is commutative. (Just like @ListT@)
-newtype MT (f :: [()] -> () -> *) (m :: * -> *) (a :: *) = MT { runMT :: m (T f (Rec (Atkey a '())) '()) }
+newtype MT (f :: [()] -> () -> *) (m :: * -> *) (a :: *) = MT { runMT :: m (T f (Atkey a '()) '()) }
 
 instance Functor m => Functor (MT f m) where
   fmap f (MT m) = MT $ fmap (\(T s d) -> T s (rmap (\(Atkey a) -> Atkey (f a)) d)) m
@@ -258,7 +259,7 @@ instance (Multicategory f, Monad m) => Monad (MT f m) where
       T s0 d0 <- m
       go d0 $ \ as ds -> return $ T (compose s0 as) ds
     where
-      go :: Rec (Atkey a '()) is -> (forall os. Forest f os is -> Rec (Atkey b '()) os -> m r) -> m r
+      go :: Rec is (Atkey a '()) -> (forall os. Forest f os is -> Rec os (Atkey b '()) -> m r) -> m r
       go RNil k = k Nil RNil
       go (Atkey a :& is) k = go is $ \fs as -> do
         T s bs <- runMT (f a)
@@ -298,7 +299,7 @@ class IFunctor m => IMonad m where
 
 -- | A McBride-style indexed monad associated with a multicategory
 data IM (f :: [k] -> k -> *) (a :: k -> *) (o :: k) where
-  IM :: f is o -> Rec a is -> IM f a o
+  IM :: f is o -> Rec is a -> IM f a o
 
 instance IFunctor (IM f) where
   imap f (IM s d) = IM s (rmap f d)
@@ -306,7 +307,7 @@ instance IFunctor (IM f) where
 instance Multicategory f => IMonad (IM f) where
   ireturn a = IM ident (a :& RNil)
   ibind (f :: a ~> IM f b) (IM s0 d0) = go d0 $ \ as ds -> IM (compose s0 as) ds where
-    go :: Rec a is -> (forall os. Forest f os is -> Rec b os -> r) -> r
+    go :: Rec is a -> (forall os. Forest f os is -> Rec os b -> r) -> r
     go RNil k = k Nil RNil
     go (a :& is) k = go is $ \fs as -> case f a of
       IM s bs -> k (s :- fs) (rappend bs as)
@@ -351,10 +352,10 @@ data Variant :: (k -> *) -> [k] -> * where
   Variant :: Selector as a -> f a -> Variant f as
 
 data Selector :: [k] -> k -> * where
-  Head :: Rec Proxy as  -> Selector (a ': as) a
+  Head :: Rec as Proxy  -> Selector (a ': as) a
   Tail :: Selector as b -> Selector (a ': as) b
 
-selectors :: Rec f as -> Rec (Selector as) as
+selectors :: Rec as f -> Rec as (Selector as)
 selectors RNil      = RNil
 selectors (a :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
 
@@ -365,13 +366,13 @@ instance Graded Selector where
 instance Multicategory Selector where
   ident = Head RNil
   compose (Tail (as :: Selector os b)) (b :- (bs :: Forest Selector js os)) = go (grade b) where
-    go :: Rec Proxy ks -> Selector (ks ++ js) b
+    go :: Rec ks Proxy -> Selector (ks ++ js) b
     go RNil      = compose as bs
     go (c :& cs) = Tail (go cs)
-  compose (Head (as :: Rec Proxy os)) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
+  compose (Head (as :: Rec os Proxy)) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
     go :: forall ks. Selector ks o -> Selector (ks ++ js) o
     go (Tail cs) = Tail (go cs)
-    go (Head cs) = Head (rappend cs (gradeForest bs))
+    go (Head cs) = Head (rappend cs (grade bs))
 
 instance Symmetric Selector where
   swap (Skip as) (Head bs)        = Head (swapRec as bs)
@@ -385,7 +386,7 @@ instance Symmetric Selector where
 --------------------------------------------------------------------------------
 
 class Symmetric f => Cartesian f where
-  cart :: f os a -> Rec (Selector is) os -> f is a
+  cart :: f os a -> Rec os (Selector is) -> f is a
   {-# MINIMAL cart #-}
 
 instance Cartesian Endo
@@ -396,7 +397,7 @@ instance Cartesian Selector
 --------------------------------------------------------------------------------
 
 -- The comonad associated with an operad
-newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec (Atkey a '()) is } -- Coatkey?
+newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec is (Atkey a '()) } -- Coatkey?
 
 instance Functor (W f) where
   fmap f (W g) = W (rmap (\(Atkey a) -> Atkey (f a)) . g)
@@ -416,7 +417,7 @@ class IFunctor w => IComonad w where
   iextend  :: (w a ~> b) -> (w a ~> w b)
 
 -- an indexed comonad associated with a multicategory
-newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
+newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec is a }
 
 -- instance Multicategory f => IComonad (IW f)
 
@@ -427,7 +428,7 @@ instance Multicategory f => IComonad (IW f) where
   iextract (IW f) = case f ident of
     a :& RNil -> a
   iextend (f :: IW f a ~> b) (IW w) = IW $ \s -> go (grade s) s where
-    go :: Rec Proxy is -> f is a1 -> Rec b is
+    go :: Rec is Proxy -> f is a1 -> Rec is b
     go gs s = undefined
   -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
 
