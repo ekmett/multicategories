@@ -1,7 +1,7 @@
 {-# LANGUAGE DataKinds, RankNTypes, TypeOperators, KindSignatures, GADTs, ScopedTypeVariables, PolyKinds, TypeFamilies, FlexibleInstances, MultiParamTypeClasses #-}
 module Multicategories where
 
-import Control.Applicative
+import Control.Applicative hiding (Const(..))
 import Control.Category
 import Control.Comonad
 import Control.Monad (ap)
@@ -73,9 +73,11 @@ traverseRec f RNil = pure RNil
 
 class Graded (f :: [k] -> k -> *) where
   grade :: f is o -> Rec Proxy is
+  {-# MINIMAL grade #-}
 
 class KnownGrade is where
   gradeVal :: Rec Proxy is
+  {-# MINIMAL gradeVal #-}
 
 instance KnownGrade '[] where
   gradeVal = RNil
@@ -115,6 +117,7 @@ splitForest (i :& is) bs ((j :: g as o) :- js) k = splitForest is bs js $ \ (l :
 class Graded f => Multicategory f where
   ident   :: f '[a] a
   compose :: f bs c -> Forest f as bs -> f as c
+  {-# MINIMAL ident, compose #-}
 
 instance Multicategory f => Semigroupoid (Forest f) where
   o Nil Nil = Nil
@@ -146,6 +149,7 @@ unswapRec Swap     (i :& j :& is) = j :& i :& is
 
 class Multicategory f => Symmetric f where
   swap :: Swap as bs -> f as o -> f bs o
+  {-# MINIMAL swap #-}
 
 -- TODO: Cartesian Multicategories
 
@@ -189,9 +193,6 @@ instance Graded f => Multicategory (Free f) where
   compose Ident ((a :: Free f bs c) :- Nil) = case appendNilAxiom :: Dict (bs ~ (bs ++ '[])) of Dict -> a
   compose (Apply f as) bs = Apply f (o as bs)
 
-instance Symmetric f => Symmetric (Free f) where
-  -- swap s (Apply f as) = Apply (swap s f) (swapForest s as)
-
 --------------------------------------------------------------------------------
 -- * Kleisli arrows of outrageous fortune
 --------------------------------------------------------------------------------
@@ -225,14 +226,14 @@ instance Multicategory f => Monad (M f) where
     go (Atkey a :& is) k = go is $ \fs as -> case f a of
       M s bs -> k (s :- fs) (rappend bs as)
 
-data K a b = K a
-
 instance Foldable (M f) where
-  foldr f z (M _ d) = case foldrRec (\(Atkey a) (K b) -> K (f a b)) (K z) d of
-    K r -> r
+  foldr f z (M _ d) = getConst $ foldrRec (\(Atkey a) (Const b) -> Const (f a b)) (Const z) d
 
 instance Traversable (M f) where
   traverse f (M s d) = M s <$> traverseRec (\(Atkey a) -> Atkey <$> f a) d
+
+-- polykinded Const
+newtype Const a b = Const { getConst :: a }
 
 --------------------------------------------------------------------------------
 -- * The monad transformer attached to a planar operad
@@ -265,7 +266,7 @@ instance (Multicategory f, Monad m) => Monad (MT f m) where
   fail s = MT $ fail s
 
 instance Foldable m => Foldable (MT f m) where
-  foldr f z (MT m) = Data.Foldable.foldr (\(T _ d) z' -> case foldrRec (\(Atkey a) (K r) -> K (f a r)) (K z') d of K o -> o) z m
+  foldr f z (MT m) = Data.Foldable.foldr (\(T _ d) z' -> getConst $ foldrRec (\(Atkey a) (Const r) -> Const (f a r)) (Const z') d) z m
 
 instance Traversable m => Traversable (MT f m) where
   traverse f (MT m) = MT <$> traverse (\(T s d) -> T s <$> traverseRec (\(Atkey a) -> Atkey <$> f a) d) m
@@ -288,10 +289,12 @@ infixr 0 ~>
 
 class IFunctor m where
   imap :: (a ~> b) -> m a ~> m b
+  {-# MINIMAL imap #-}
 
 class IFunctor m => IMonad m where
   ireturn :: a ~> m a
   ibind :: (a ~> m b) -> (m a ~> m b)
+  {-# MINIMAL ireturn, ibind #-}
 
 -- | A McBride-style indexed monad associated with a multicategory
 data IM (f :: [k] -> k -> *) (a :: k -> *) (o :: k) where
@@ -338,7 +341,7 @@ instance Category p => Multicategory (C p) where
   compose (C f) (C g :- Nil) = C (f . g)
 
 instance Category p => Symmetric (C p) where
-  swap = error "The permutations of 1 element are trivial. How did you get here?"
+  swap x = x `seq` error "The permutations of 1 element are trivial. How did you get here?"
 
 --------------------------------------------------------------------------------
 -- * Variants
@@ -376,6 +379,17 @@ instance Symmetric Selector where
   swap (Skip as) (Tail bs)        = Tail (swap as bs)
   swap Swap      (Tail (Head bs)) = Head (Proxy :& bs)
   swap Swap      (Tail (Tail bs)) = Tail (Tail bs)
+
+--------------------------------------------------------------------------------
+-- * Cartesian Multicategories
+--------------------------------------------------------------------------------
+
+class Symmetric f => Cartesian f where
+  cart :: f os a -> Rec (Selector is) os -> f is a
+  {-# MINIMAL cart #-}
+
+instance Cartesian Endo
+instance Cartesian Selector
 
 --------------------------------------------------------------------------------
 -- * The comonad associated with an operad.
