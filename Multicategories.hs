@@ -7,11 +7,13 @@ import Control.Comonad
 import Control.Monad (ap)
 import Control.Monad.ST
 import Data.Constraint
+import Data.Foldable
 import Data.Functor.Identity
 import Data.Functor.Rep
 import Data.Proxy
 import Data.Semigroupoid
 import Data.Semigroupoid.Ob
+import Data.Traversable
 import Data.Vector as Vector
 import Data.Vector.Mutable as Mutable
 import GHC.TypeLits
@@ -59,11 +61,19 @@ splitRec RNil    as        = (RNil, as)
 splitRec (_ :& is) (a :& as) = case splitRec is as of
   (l,r) -> (a :& l, r)
 
+foldrRec :: (forall i is. f i -> r is -> r (i ': is)) -> r '[] -> Rec f is -> r is
+foldrRec _ z RNil = z
+foldrRec f z (a :& as) = f a (foldrRec f z as)
+
+traverseRec :: Applicative m => (forall i. f i -> m (g i)) -> Rec f is -> m (Rec g is)
+traverseRec f (a :& as) = (:&) <$> f a <*> traverseRec f as
+traverseRec f RNil = pure RNil
+
 --------------------------------------------------------------------------------
 -- * Graded structures
 --------------------------------------------------------------------------------
 
-class Graded f where
+class Graded (f :: [k] -> k -> *) where
   grade :: f is o -> Rec Proxy is
 
 class KnownGrade is where
@@ -79,23 +89,24 @@ instance KnownGrade is => KnownGrade (i ': is) where
 -- * Arguments for a multicategory form a polycategory
 --------------------------------------------------------------------------------
 
--- | Each 'Multicategory' is a contravariant functor in @'Args' f@ in its first argument.
-data Args :: ([k] -> k -> *) -> [k] -> [k] -> * where
-  Nil  :: Args f '[] '[]
-  (:-) :: f is o -> Args f js os -> Args f (is ++ js) (o ': os)
+-- | Each 'Multicategory' is a contravariant functor in @'Forest' f@ in its first argument.
+data Forest :: ([k] -> k -> *) -> [k] -> [k] -> * where
+  Nil  :: Forest f '[] '[]
+  (:-) :: f is o -> Forest f js os -> Forest f (is ++ js) (o ': os)
 
 infixr 5 :-, :&
 
-foldrArgs :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Args f m n -> r m
-foldrArgs _ z Nil = z
-foldrArgs f z (a :- as) = f a (foldrArgs f z as)
+foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest f m n -> r m
+foldrForest _ z Nil = z
+foldrForest f z (a :- as) = f a (foldrForest f z as)
 
-gradeArgs :: Graded f => Args f is os -> Rec Proxy is
-gradeArgs = foldrArgs (\a r -> grade a `rappend` r) RNil
 
-splitArgs :: forall f g ds is js os r. Rec f is -> Args g js os -> Args g ds (is ++ js) -> (forall bs cs. (ds ~ (bs ++ cs)) => Args g bs is -> Args g cs js -> r) -> r
-splitArgs RNil bs as k = k Nil as
-splitArgs (i :& is) bs ((j :: g as o) :- js) k = splitArgs is bs js $ \ (l :: Args g bs as1) (r :: Args g cs js) ->
+gradeForest :: Graded f => Forest f is os -> Rec Proxy is
+gradeForest = foldrForest (\a r -> grade a `rappend` r) RNil
+
+splitForest :: forall f g ds is js os r. Rec f is -> Forest g js os -> Forest g ds (is ++ js) -> (forall bs cs. (ds ~ (bs ++ cs)) => Forest g bs is -> Forest g cs js -> r) -> r
+splitForest RNil bs as k = k Nil as
+splitForest (i :& is) bs ((j :: g as o) :- js) k = splitForest is bs js $ \ (l :: Forest g bs as1) (r :: Forest g cs js) ->
   case appendAssocAxiom (Proxy :: Proxy as) (Proxy :: Proxy bs) (Proxy :: Proxy cs) of
     Dict -> k (j :- l) r
 
@@ -106,16 +117,16 @@ splitArgs (i :& is) bs ((j :: g as o) :- js) k = splitArgs is bs js $ \ (l :: Ar
 -- | multicategory / planar colored operad
 class Graded f => Multicategory f where
   ident   :: f '[a] a
-  compose :: f bs c -> Args f as bs -> f as c
+  compose :: f bs c -> Forest f as bs -> f as c
 
-instance Multicategory f => Semigroupoid (Args f) where
+instance Multicategory f => Semigroupoid (Forest f) where
   o Nil Nil = Nil
-  o (b :- bs) as = splitArgs (grade b) bs as $ \es fs -> compose b es :- o bs fs
+  o (b :- bs) as = splitForest (grade b) bs as $ \es fs -> compose b es :- o bs fs
 
-instance (Multicategory f, KnownGrade is) => Ob (Args f) is where
+instance (Multicategory f, KnownGrade is) => Ob (Forest f) is where
   semiid = idents gradeVal
 
-idents :: Multicategory f => Rec Proxy is -> Args f is is
+idents :: Multicategory f => Rec Proxy is -> Forest f is is
 idents (a :& as) = ident :- idents as
 idents RNil      = Nil
 
@@ -154,8 +165,8 @@ instance Graded Endo where
 
 instance Multicategory Endo where
   ident = Endo gradeVal $ \(Identity a :& RNil) -> a
-  compose (Endo _ f) as = Endo (gradeArgs as) $ \v -> f $ go as v where
-    go :: Args Endo is os -> Rec Identity is -> Rec Identity os
+  compose (Endo _ f) as = Endo (gradeForest as) $ \v -> f $ go as v where
+    go :: Forest Endo is os -> Rec Identity is -> Rec Identity os
     go (Endo gg g :- gs) v = case splitRec gg v of
       (l,r) -> Identity (g l) :& go gs r
     go Nil RNil = RNil
@@ -170,11 +181,11 @@ instance Symmetric Endo where -- TODO
 -- | free multicategory given graded atoms
 data Free :: ([k] -> k -> *) -> [k] -> k -> * where
   Ident :: Free f '[a] a
-  Apply :: f bs c -> Args (Free f) as bs -> Free f as c
+  Apply :: f bs c -> Forest (Free f) as bs -> Free f as c
 
 instance Graded f => Graded (Free f) where
   grade Ident = Proxy :& RNil
-  grade (Apply _ as) = gradeArgs as
+  grade (Apply _ as) = gradeForest as
 
 instance Graded f => Multicategory (Free f) where
   ident = Ident
@@ -182,7 +193,7 @@ instance Graded f => Multicategory (Free f) where
   compose (Apply f as) bs = Apply f (o as bs)
 
 instance Symmetric f => Symmetric (Free f) where
-  -- swap s (Apply f as) = Apply (swap s f) (swapArgs s as)
+  -- swap s (Apply f as) = Apply (swap s f) (swapForest s as)
 
 --------------------------------------------------------------------------------
 -- * Kleisli arrows of outrageous fortune
@@ -190,6 +201,9 @@ instance Symmetric f => Symmetric (Free f) where
 
 data Atkey a i j where
   Atkey :: a -> Atkey a i i
+
+amap :: (a -> b) -> Atkey a i j -> Atkey b i j
+amap f (Atkey a) = Atkey (f a)
 
 --------------------------------------------------------------------------------
 -- * The monad attached to a planar operad
@@ -209,10 +223,57 @@ instance Multicategory f => Applicative (M f) where
 instance Multicategory f => Monad (M f) where
   return a = M ident (Atkey a :& RNil)
   M s0 d0 >>= (f :: a -> M f b) = go d0 $ \ as ds -> M (compose s0 as) ds where
-    go :: Rec (Atkey a '()) is -> (forall os. Args f os is -> Rec (Atkey b '()) os -> r) -> r
+    go :: Rec (Atkey a '()) is -> (forall os. Forest f os is -> Rec (Atkey b '()) os -> r) -> r
     go RNil k = k Nil RNil
     go (Atkey a :& is) k = go is $ \fs as -> case f a of
       M s bs -> k (s :- fs) (rappend bs as)
+
+data K a b = K a
+
+instance Foldable (M f) where
+  foldr f z (M _ d) = case foldrRec (\(Atkey a) (K b) -> K (f a b)) (K z) d of
+    K r -> r
+
+instance Traversable (M f) where
+  traverse f (M s d) = M s <$> traverseRec (\(Atkey a) -> Atkey <$> f a) d
+
+--------------------------------------------------------------------------------
+-- * The monad transformer attached to a planar operad
+--------------------------------------------------------------------------------
+
+data T f g o where
+  T :: f is o -> g is -> T f g o
+
+-- This does not form a valid monad unless the monad @m@ is commutative. (Just like @ListT@)
+newtype MT (f :: [()] -> () -> *) (m :: * -> *) (a :: *) = MT { runMT :: m (T f (Rec (Atkey a '())) '()) }
+
+instance Functor m => Functor (MT f m) where
+  fmap f (MT m) = MT $ fmap (\(T s d) -> T s (rmap (\(Atkey a) -> Atkey (f a)) d)) m
+
+instance (Multicategory f, Functor m, Monad m) => Applicative (MT f m) where
+  pure = return
+  (<*>) = ap
+
+instance (Multicategory f, Monad m) => Monad (MT f m) where
+  return a = MT (return (T ident (Atkey a :& RNil)))
+  MT m >>= (f :: a -> MT f m b) = MT $ do
+      T s0 d0 <- m
+      go d0 $ \ as ds -> return $ T (compose s0 as) ds
+    where
+      go :: Rec (Atkey a '()) is -> (forall os. Forest f os is -> Rec (Atkey b '()) os -> m r) -> m r
+      go RNil k = k Nil RNil
+      go (Atkey a :& is) k = go is $ \fs as -> do
+        T s bs <- runMT (f a)
+        k (s :- fs) (rappend bs as)
+  fail s = MT $ fail s
+
+instance Foldable m => Foldable (MT f m) where
+  foldr f z (MT m) = Data.Foldable.foldr (\(T _ d) z' -> case foldrRec (\(Atkey a) (K r) -> K (f a r)) (K z') d of K o -> o) z m
+
+instance Traversable m => Traversable (MT f m) where
+  traverse f (MT m) = MT <$> traverse (\(T s d) -> T s <$> traverseRec (\(Atkey a) -> Atkey <$> f a) d) m
+
+-- TODO: Build a monad transformer associated with an operad based on ListT-done-right?
 
 --------------------------------------------------------------------------------
 -- * Algebras over a Operad
@@ -245,7 +306,7 @@ instance IFunctor (IM f) where
 instance Multicategory f => IMonad (IM f) where
   ireturn a = IM ident (a :& RNil)
   ibind (f :: a ~> IM f b) (IM s0 d0) = go d0 $ \ as ds -> IM (compose s0 as) ds where
-    go :: Rec a is -> (forall os. Args f os is -> Rec b os -> r) -> r
+    go :: Rec a is -> (forall os. Forest f os is -> Rec b os -> r) -> r
     go RNil k = k Nil RNil
     go (a :& is) k = go is $ \fs as -> case f a of
       IM s bs -> k (s :- fs) (rappend bs as)
@@ -348,6 +409,6 @@ instance Multicategory f => IComonad (IW f) where
 -- class (Semigroupoid q, Semigroupoid r) => Profunctor p q r | p -> q r where
 --   dimap :: q a b -> r c d -> p b c -> p a d
 
--- class (Profunctor p (Args p) (Oper p), Graded p) => Multicategory p where ident :: p '[a] a ...
+-- class (Profunctor p (Forest p) (Oper p), Graded p) => Multicategory p where ident :: p '[a] a ...
 --
 -- now 'compose' is an lmap.
