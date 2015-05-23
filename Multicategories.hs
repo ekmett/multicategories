@@ -14,8 +14,6 @@ import Data.Proxy
 import Data.Semigroupoid
 import Data.Semigroupoid.Ob
 import Data.Traversable
-import Data.Vector as Vector
-import Data.Vector.Mutable as Mutable
 import GHC.TypeLits
 import Unsafe.Coerce
 import Prelude hiding ((++), id, (.))
@@ -99,7 +97,6 @@ infixr 5 :-, :&
 foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest f m n -> r m
 foldrForest _ z Nil = z
 foldrForest f z (a :- as) = f a (foldrForest f z as)
-
 
 gradeForest :: Graded f => Forest f is os -> Rec Proxy is
 gradeForest = foldrForest (\a r -> grade a `rappend` r) RNil
@@ -372,6 +369,13 @@ instance Multicategory Selector where
     go :: forall ks. Selector ks o -> Selector (ks ++ js) o
     go (Tail cs) = Tail (go cs)
     go (Head cs) = Head (rappend cs (gradeForest bs))
+
+instance Symmetric Selector where
+  swap (Skip as) (Head bs)        = Head (swapRec as bs)
+  swap Swap      (Head (_ :& bs)) = Tail (Head bs)
+  swap (Skip as) (Tail bs)        = Tail (swap as bs)
+  swap Swap      (Tail (Head bs)) = Head (Proxy :& bs)
+  swap Swap      (Tail (Tail bs)) = Tail (Tail bs)
 
 --------------------------------------------------------------------------------
 -- * The comonad associated with an operad.
