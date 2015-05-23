@@ -362,20 +362,16 @@ instance Graded Selector where
   grade (Tail as) = Proxy :& grade as
   grade (Head as) = as
 
--- composeSelector :: forall (as :: [k]) (bs :: [k]) (c :: k). Selector bs c -> Forest Selector as bs -> Selector as c
-composeSelector :: Selector bs c -> Forest Selector as bs -> Selector as c
-composeSelector (Tail (as :: Selector os b)) (b :- (bs :: Forest Selector js os)) = go (grade b) where
-  go :: Rec Proxy ks -> Selector (ks ++ js) b
-  go RNil      = compose as bs
-  go (c :& cs) = Tail (go cs)
-composeSelector (Head (as :: Rec Proxy (o ': os))) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
-  go :: forall ks. Selector ks o -> Selector (ks ++ js) o
-  go (Tail cs) = Tail (go cs)
-  go (Head cs) = Head (rappend cs (gradeForest bs))
-
 instance Multicategory Selector where
   ident   = Head (Proxy :& RNil)
-  compose = composeSelector
+  compose (Tail (as :: Selector os b)) (b :- (bs :: Forest Selector js os)) = go (grade b) where
+    go :: Rec Proxy ks -> Selector (ks ++ js) b
+    go RNil      = compose as bs
+    go (c :& cs) = Tail (go cs)
+  compose (Head (as :: Rec Proxy (o ': os))) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
+    go :: forall ks. Selector ks o -> Selector (ks ++ js) o
+    go (Tail cs) = Tail (go cs)
+    go (Head cs) = Head (rappend cs (gradeForest bs))
 
 --------------------------------------------------------------------------------
 -- * The comonad associated with an operad.
