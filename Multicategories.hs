@@ -348,15 +348,34 @@ instance Category p => Symmetric (C p) where
 --------------------------------------------------------------------------------
 
 data Variant :: (k -> *) -> [k] -> * where
-  Variant :: Selector f as a -> Variant f as
+  Variant :: Selector as a -> f a -> Variant f as
 
-data Selector :: (k -> *) -> [k] -> k -> * where
-  Head :: f a -> Selector f (a ': as) a
-  Tail :: Selector f as b -> Selector f (a ': as) b
+data Selector :: [k] -> k -> * where
+  Head :: Rec Proxy (a ': as) -> Selector (a ': as) a
+  Tail :: Selector as b       -> Selector (a ': as) b
 
-selectors :: Rec f as -> Rec (Selector f as) as
+selectors :: Rec f as -> Rec (Selector as) as
 selectors RNil      = RNil
-selectors (a :& as) = Head a :& rmap Tail (selectors as)
+selectors (a :& as) = Head (Proxy :& rmap (const Proxy) as) :& rmap Tail (selectors as)
+
+instance Graded Selector where
+  grade (Tail as) = Proxy :& grade as
+  grade (Head as) = as
+
+-- composeSelector :: forall (as :: [k]) (bs :: [k]) (c :: k). Selector bs c -> Forest Selector as bs -> Selector as c
+composeSelector :: Selector bs c -> Forest Selector as bs -> Selector as c
+composeSelector (Tail (as :: Selector os b)) (b :- (bs :: Forest Selector js os)) = go (grade b) where
+  go :: Rec Proxy ks -> Selector (ks ++ js) b
+  go RNil      = compose as bs
+  go (c :& cs) = Tail (go cs)
+composeSelector (Head (as :: Rec Proxy (o ': os))) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
+  go :: forall ks. Selector ks o -> Selector (ks ++ js) o
+  go (Tail cs) = Tail (go cs)
+  go (Head cs) = Head (rappend cs (gradeForest bs))
+
+instance Multicategory Selector where
+  ident   = Head (Proxy :& RNil)
+  compose = composeSelector
 
 --------------------------------------------------------------------------------
 -- * The comonad associated with an operad.
