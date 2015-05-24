@@ -71,7 +71,7 @@ traverseRec f RNil = pure RNil
 -- * Graded structures
 --------------------------------------------------------------------------------
 
-class Graded (f :: [k] -> k -> *) where
+class Graded (f :: [i] -> j -> *) where
   grade :: f is o -> Rec Proxy is
   {-# MINIMAL grade #-}
 
@@ -100,8 +100,8 @@ foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest 
 foldrForest _ z Nil = z
 foldrForest f z (a :- as) = f a (foldrForest f z as)
 
-gradeForest :: Graded f => Forest f is os -> Rec Proxy is
-gradeForest = foldrForest (\a r -> grade a `rappend` r) RNil
+instance Graded f => Graded (Forest f) where
+  grade = foldrForest (\a r -> grade a `rappend` r) RNil
 
 splitForest :: forall f g ds is js os r. Rec f is -> Forest g js os -> Forest g ds (is ++ js) -> (forall bs cs. (ds ~ (bs ++ cs)) => Forest g bs is -> Forest g cs js -> r) -> r
 splitForest RNil bs as k = k Nil as
@@ -166,7 +166,7 @@ instance Graded Endo where
 
 instance Multicategory Endo where
   ident = Endo gradeVal $ \(Identity a :& RNil) -> a
-  compose (Endo _ f) as = Endo (gradeForest as) $ \v -> f $ go as v where
+  compose (Endo _ f) as = Endo (grade as) $ \v -> f $ go as v where
     go :: Forest Endo is os -> Rec Identity is -> Rec Identity os
     go (Endo gg g :- gs) v = case splitRec gg v of
       (l,r) -> Identity (g l) :& go gs r
@@ -186,7 +186,7 @@ data Free :: ([k] -> k -> *) -> [k] -> k -> * where
 
 instance Graded f => Graded (Free f) where
   grade Ident = Proxy :& RNil
-  grade (Apply _ as) = gradeForest as
+  grade (Apply _ as) = grade as
 
 instance Graded f => Multicategory (Free f) where
   ident = Ident
@@ -344,11 +344,8 @@ instance Category p => Symmetric (C p) where
   swap x = x `seq` error "The permutations of 1 element are trivial. How did you get here?"
 
 --------------------------------------------------------------------------------
--- * Variants
+-- * Selectors
 --------------------------------------------------------------------------------
-
-data Variant :: (k -> *) -> [k] -> * where
-  Variant :: Selector as a -> f a -> Variant f as
 
 data Selector :: [k] -> k -> * where
   Head :: Rec Proxy as  -> Selector (a ': as) a
@@ -357,6 +354,13 @@ data Selector :: [k] -> k -> * where
 selectors :: Rec f as -> Rec (Selector as) as
 selectors RNil      = RNil
 selectors (a :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
+
+-- @Rec f@ is represented by @Selector@
+select :: Rec f is -> Selector is o -> f o
+select (a :& _) (Head _) = a
+select (_ :& b) (Tail c) = select b c
+
+-- tabulate :: KnownGrade is => (Selector is o -> f o) -> Rec f is
 
 instance Graded Selector where
   grade (Tail as) = Proxy :& grade as
@@ -371,7 +375,7 @@ instance Multicategory Selector where
   compose (Head (as :: Rec Proxy os)) ((b :: Selector is o) :- (bs :: Forest Selector js os)) = go b where
     go :: forall ks. Selector ks o -> Selector (ks ++ js) o
     go (Tail cs) = Tail (go cs)
-    go (Head cs) = Head (rappend cs (gradeForest bs))
+    go (Head cs) = Head (rappend cs (grade bs))
 
 instance Symmetric Selector where
   swap (Skip as) (Head bs)        = Head (swapRec as bs)
@@ -380,16 +384,39 @@ instance Symmetric Selector where
   swap Swap      (Tail (Head bs)) = Head (Proxy :& bs)
   swap Swap      (Tail (Tail bs)) = Tail (Tail bs)
 
+
 --------------------------------------------------------------------------------
 -- * Cartesian Multicategories
 --------------------------------------------------------------------------------
 
+data Cart is os where
+  Cart :: Rec Proxy is -> Rec (Selector is) os -> Cart is os
+
+instance Semigroupoid Cart where
+  Cart bs bcs `o` Cart as abs = Cart as (rmap (select abs) bcs)
+
+instance KnownGrade is => Ob Cart is where
+  semiid = Cart r (selectors r) where
+    r = gradeVal
+
+instance Graded Cart where
+  grade (Cart g _) = g
+
 class Symmetric f => Cartesian f where
-  cart :: f os a -> Rec (Selector is) os -> f is a
+  cart :: f bs c -> Cart as bs -> f as c
   {-# MINIMAL cart #-}
 
-instance Cartesian Endo
+instance Cartesian Endo where
+  cart (Endo gf f) (Cart gc c) = Endo gc $ \v -> f (rmap (select v) c)
+
 instance Cartesian Selector
+
+--------------------------------------------------------------------------------
+-- * Variants
+--------------------------------------------------------------------------------
+
+data Variant :: (k -> *) -> [k] -> * where
+  Variant :: Selector as a -> f a -> Variant f as
 
 --------------------------------------------------------------------------------
 -- * The comonad associated with an operad.
