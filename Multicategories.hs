@@ -10,6 +10,7 @@ import Data.Constraint
 import Data.Foldable
 import Data.Functor.Identity
 import Data.Functor.Rep
+import Data.Monoid (Monoid(..), (<>))
 import Data.Proxy
 import Data.Semigroupoid
 import Data.Semigroupoid.Ob
@@ -234,6 +235,16 @@ instance Traversable (M f) where
 
 -- polykinded Const
 newtype Const a b = Const { getConst :: a }
+
+data WriterOp m :: [()] -> () -> * where
+  WriterOp :: m -> WriterOp m '[a] a
+
+instance Graded (WriterOp m) where
+  grade WriterOp{} = Proxy :& RNil
+
+instance Monoid m => Multicategory (WriterOp m) where
+  ident = WriterOp mempty
+  compose (WriterOp m1) (WriterOp m2 :- Nil) = WriterOp (m1 <> m2)
 
 --------------------------------------------------------------------------------
 -- * The monad transformer attached to a planar operad
