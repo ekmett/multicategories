@@ -213,7 +213,7 @@ data M (f :: [()] -> () -> *) (a :: *) where
   M :: f is '() -> Rec (Atkey a '()) is -> M f a
 
 instance Functor (M f) where
-  fmap f (M s d) = M s (rmap (\(Atkey a) -> Atkey (f a)) d)
+  fmap f (M s d) = M s (rmap (amap f) d)
 
 instance Multicategory f => Applicative (M f) where
   pure = return
@@ -257,7 +257,7 @@ data T f g o where
 newtype MT (f :: [()] -> () -> *) (m :: * -> *) (a :: *) = MT { runMT :: m (T f (Rec (Atkey a '())) '()) }
 
 instance Functor m => Functor (MT f m) where
-  fmap f (MT m) = MT $ fmap (\(T s d) -> T s (rmap (\(Atkey a) -> Atkey (f a)) d)) m
+  fmap f (MT m) = MT $ fmap (\(T s d) -> T s (rmap (amap f) d)) m
 
 instance (Multicategory f, Functor m, Monad m) => Applicative (MT f m) where
   pure = return
