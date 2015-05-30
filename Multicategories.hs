@@ -367,7 +367,12 @@ data Selector :: [k] -> k -> * where
 
 selectors :: Rec f as -> Rec (Selector as) as
 selectors RNil      = RNil
-selectors (a :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
+selectors (_ :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
+
+infixl 9 !
+(!) :: Rec f is -> Selector is o -> f o
+(a :& _) ! Head _ = a
+(_ :& as) ! Tail s = as ! s
 
 instance Graded Selector where
   grade (Tail as) = Proxy :& grade as
@@ -396,11 +401,13 @@ instance Symmetric Selector where
 --------------------------------------------------------------------------------
 
 class Symmetric f => Cartesian f where
-  cart :: f os a -> Rec (Selector is) os -> f is a
+  cart :: KnownGrade is => f os a -> Rec (Selector is) os -> f is a
   {-# MINIMAL cart #-}
 
-instance Cartesian Endo
-instance Cartesian Selector
+instance Cartesian Endo where
+  cart (Endo _ f) ss = Endo gradeVal (\r -> f (rmap (r !) ss))
+instance Cartesian Selector where
+  cart = flip (!)
 
 --------------------------------------------------------------------------------
 -- * The comonad associated with an operad.
