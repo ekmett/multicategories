@@ -236,16 +236,6 @@ instance Traversable (M f) where
 -- polykinded Const
 newtype Const a b = Const { getConst :: a }
 
-data WriterOp m :: [()] -> () -> * where
-  WriterOp :: m -> WriterOp m '[a] a
-
-instance Graded (WriterOp m) where
-  grade WriterOp{} = Proxy :& RNil
-
-instance Monoid m => Multicategory (WriterOp m) where
-  ident = WriterOp mempty
-  compose (WriterOp m1) (WriterOp m2 :- Nil) = WriterOp (m1 <> m2)
-
 --------------------------------------------------------------------------------
 -- * The monad transformer attached to a planar operad
 --------------------------------------------------------------------------------
@@ -463,3 +453,18 @@ instance Multicategory f => IComonad (IW f) where
 -- class (Profunctor p (Forest p) (Oper p), Graded p) => Multicategory p where ident :: p '[a] a ...
 --
 -- now 'compose' is an lmap.
+
+--------------------------------------------------------------------------------
+-- * The operad associated with a monoid
+--------------------------------------------------------------------------------
+
+-- M (MonoidOp m) is isomorphic to Writer m, W (MonoidOp m) is isomorphic to Traced m
+data MonoidOp m :: [()] -> () -> * where
+  MonoidOp :: m -> MonoidOp m '[a] a
+
+instance Graded (MonoidOp m) where
+  grade MonoidOp{} = Proxy :& RNil
+
+instance Monoid m => Multicategory (MonoidOp m) where
+  ident = MonoidOp mempty
+  compose (MonoidOp m1) (MonoidOp m2 :- Nil) = MonoidOp (m1 <> m2)
