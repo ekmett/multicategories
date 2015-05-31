@@ -60,6 +60,11 @@ splitRec RNil    as        = (RNil, as)
 splitRec (_ :& is) (a :& as) = case splitRec is as of
   (l,r) -> (a :& l, r)
 
+splitRec' :: Rec f is -> Rec f js -> Rec g (is ++ js) -> (Rec g is, Rec g js)
+splitRec' RNil      js as        = (RNil, as)
+splitRec' (_ :& is) js (a :& as) = case splitRec' is js as of
+  (l,r) -> (a :& l, r)
+
 foldrRec :: (forall i is. f i -> r is -> r (i ': is)) -> r '[] -> Rec f is -> r is
 foldrRec _ z RNil = z
 foldrRec f z (a :& as) = f a (foldrRec f z as)
@@ -96,6 +101,11 @@ data Forest :: ([k] -> k -> *) -> [k] -> [k] -> * where
   (:-) :: f is o -> Forest f js os -> Forest f (is ++ js) (o ': os)
 
 infixr 5 :-, :&
+
+appendForest :: Graded f => Forest f as bs -> Forest f cs ds -> Forest f (as ++ cs) (bs ++ ds)
+appendForest Nil rs = rs
+appendForest (l :- ls) rs = case appendAssocAxiom (grade l) (gradeForest ls) (gradeForest rs) of
+  Dict -> l :- appendForest ls rs
 
 foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest f m n -> r m
 foldrForest _ z Nil = z
@@ -426,19 +436,20 @@ class IFunctor w => IComonad w where
 -- an indexed comonad associated with a multicategory
 newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
 
--- instance Multicategory f => IComonad (IW f)
-
 instance IFunctor (IW f) where
   imap f (IW g) = IW $ \s -> rmap f (g s)
 
 instance Multicategory f => IComonad (IW f) where
   iextract (IW f) = case f ident of
     a :& RNil -> a
-  iextend (f :: IW f a ~> b) (IW w) = IW $ \s -> go (grade s) s where
-    go :: Rec Proxy is -> f is a1 -> Rec b is
-    go gs s = undefined
-  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
-
+  iextend (f :: IW f a ~> b) (w :: IW f a o) = IW $ \s -> go RNil (grade s) s where
+    go :: forall ls rs. Rec Proxy ls -> Rec Proxy rs -> f (ls ++ rs) o -> Rec b rs
+    go _ RNil _ = RNil
+    go ls (p :& rs) s = f g :& go (rappend ls (p :& RNil)) rs (shift s)
+      where
+        g = IW $ \s' -> prune ls (grade s') rs (runIW w (compose s (appendForest (idents ls) (s' :- idents rs))))
+        prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
+        shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
 --------------------------------------------------------------------------------
 -- * A category over an operad
