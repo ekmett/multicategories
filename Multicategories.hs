@@ -205,7 +205,7 @@ instance Graded f => Multicategory (Free f) where
   compose (Apply f as) bs = Apply f (o as bs)
 
 --------------------------------------------------------------------------------
--- * Kleisli arrows of outrageous fortune
+-- * The monad attached to a planar operad
 --------------------------------------------------------------------------------
 
 data Atkey a i j where
@@ -214,9 +214,6 @@ data Atkey a i j where
 amap :: (a -> b) -> Atkey a i j -> Atkey b i j
 amap f (Atkey a) = Atkey (f a)
 
---------------------------------------------------------------------------------
--- * The monad attached to a planar operad
---------------------------------------------------------------------------------
 
 -- The monad attached to an operad. This generalizes the notion of the writer monad to an arbitrary operad
 data M (f :: [()] -> () -> *) (a :: *) where
@@ -438,15 +435,26 @@ data Variant :: (k -> *) -> [k] -> * where
 -- * The comonad associated with an operad.
 --------------------------------------------------------------------------------
 
--- The comonad associated with an operad
-newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec (Atkey a '()) is } -- Coatkey?
+newtype Coatkey a i j = Coatkey { getCoatkey :: (i ~ j) => a }
+
+-- | The comonad associated with an operad
+newtype W (f :: [()] -> () -> *) (a :: *) = W { runW :: forall is. f is '() -> Rec (Coatkey a '()) is }
 
 instance Functor (W f) where
-  fmap f (W g) = W (rmap (\(Atkey a) -> Atkey (f a)) . g)
+  fmap f (W g) = W (rmap (\(Coatkey a) -> Coatkey (f a)) . g)
 
 instance Multicategory f => Comonad (W f) where
   extract (W f) = case f ident of
-    Atkey a :& RNil -> a
+    Coatkey a :& RNil -> a
+  extend (f :: W f a -> b) (w :: W f a) = W $ \s -> go RNil (grade s) s where
+    go :: forall (ls :: [()]) (rs :: [()]). Rec Proxy ls -> Rec Proxy rs -> f (ls ++ rs) '() -> Rec (Coatkey b '()) rs
+    go _ RNil _ = RNil
+    go ls (p :& rs) s = g :& go (rappend ls (p :& RNil)) rs (shift s)
+      where
+        g = Coatkey $ f $ W $ \s' ->
+          prune ls (grade s') rs (runW w (compose s (appendForest (idents ls) (s' :- idents rs))))
+        prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
+        shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
 --------------------------------------------------------------------------------
 -- * Indexed Monads from a Multicategory
