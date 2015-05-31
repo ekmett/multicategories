@@ -363,17 +363,13 @@ selectors :: Rec f as -> Rec (Selector as) as
 selectors RNil      = RNil
 selectors (_ :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
 
-infixl 9 !
-(!) :: Rec f is -> Selector is o -> f o
-(a :& _) ! Head _ = a
-(_ :& as) ! Tail s = as ! s
-
 -- @Rec f@ is represented by @Selector@
-select :: Rec f is -> Selector is o -> f o
+select :: Rec f is -> Selector is ~> f
 select (a :& _) (Head _) = a
 select (_ :& b) (Tail c) = select b c
 
--- tabulate :: KnownGrade is => (Selector is o -> f o) -> Rec f is
+tabulate :: KnownGrade is => (Selector is ~> f) -> Rec f is
+tabulate f = rmap f (selectors gradeVal)
 
 instance Graded Selector where
   grade (Tail as) = Proxy :& grade as
