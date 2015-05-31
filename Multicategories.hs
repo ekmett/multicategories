@@ -10,6 +10,7 @@ import Data.Constraint
 import Data.Foldable
 import Data.Functor.Identity
 import Data.Functor.Rep
+import Data.Monoid (Monoid(..), (<>))
 import Data.Proxy
 import Data.Semigroupoid
 import Data.Semigroupoid.Ob
@@ -59,6 +60,11 @@ splitRec RNil    as        = (RNil, as)
 splitRec (_ :& is) (a :& as) = case splitRec is as of
   (l,r) -> (a :& l, r)
 
+splitRec' :: Rec f is -> Rec f js -> Rec g (is ++ js) -> (Rec g is, Rec g js)
+splitRec' RNil      js as        = (RNil, as)
+splitRec' (_ :& is) js (a :& as) = case splitRec' is js as of
+  (l,r) -> (a :& l, r)
+
 foldrRec :: (forall i is. f i -> r is -> r (i ': is)) -> r '[] -> Rec f is -> r is
 foldrRec _ z RNil = z
 foldrRec f z (a :& as) = f a (foldrRec f z as)
@@ -95,6 +101,11 @@ data Forest :: ([k] -> k -> *) -> [k] -> [k] -> * where
   (:-) :: f is o -> Forest f js os -> Forest f (is ++ js) (o ': os)
 
 infixr 5 :-, :&
+
+appendForest :: Graded f => Forest f as bs -> Forest f cs ds -> Forest f (as ++ cs) (bs ++ ds)
+appendForest Nil rs = rs
+appendForest (l :- ls) rs = case appendAssocAxiom (grade l) (grade ls) (grade rs) of
+  Dict -> l :- appendForest ls rs
 
 foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest f m n -> r m
 foldrForest _ z Nil = z
@@ -212,7 +223,7 @@ data M (f :: [()] -> () -> *) (a :: *) where
   M :: f is '() -> Rec (Atkey a '()) is -> M f a
 
 instance Functor (M f) where
-  fmap f (M s d) = M s (rmap (\(Atkey a) -> Atkey (f a)) d)
+  fmap f (M s d) = M s (rmap (amap f) d)
 
 instance Multicategory f => Applicative (M f) where
   pure = return
@@ -246,7 +257,7 @@ data T f g o where
 newtype MT (f :: [()] -> () -> *) (m :: * -> *) (a :: *) = MT { runMT :: m (T f (Rec (Atkey a '())) '()) }
 
 instance Functor m => Functor (MT f m) where
-  fmap f (MT m) = MT $ fmap (\(T s d) -> T s (rmap (\(Atkey a) -> Atkey (f a)) d)) m
+  fmap f (MT m) = MT $ fmap (\(T s d) -> T s (rmap (amap f) d)) m
 
 instance (Multicategory f, Functor m, Monad m) => Applicative (MT f m) where
   pure = return
@@ -353,7 +364,12 @@ data Selector :: [k] -> k -> * where
 
 selectors :: Rec f as -> Rec (Selector as) as
 selectors RNil      = RNil
-selectors (a :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
+selectors (_ :& as) = Head (rmap (const Proxy) as) :& rmap Tail (selectors as)
+
+infixl 9 !
+(!) :: Rec f is -> Selector is o -> f o
+(a :& _) ! Head _ = a
+(_ :& as) ! Tail s = as ! s
 
 -- @Rec f@ is represented by @Selector@
 select :: Rec f is -> Selector is o -> f o
@@ -384,7 +400,6 @@ instance Symmetric Selector where
   swap Swap      (Tail (Head bs)) = Head (Proxy :& bs)
   swap Swap      (Tail (Tail bs)) = Tail (Tail bs)
 
-
 --------------------------------------------------------------------------------
 -- * Cartesian Multicategories
 --------------------------------------------------------------------------------
@@ -409,7 +424,8 @@ class Symmetric f => Cartesian f where
 instance Cartesian Endo where
   cart (Endo gf f) (Cart gc c) = Endo gc $ \v -> f (rmap (select v) c)
 
-instance Cartesian Selector
+instance Cartesian Selector where
+  cart s (Cart _ r) = select r s
 
 --------------------------------------------------------------------------------
 -- * Variants
@@ -445,19 +461,20 @@ class IFunctor w => IComonad w where
 -- an indexed comonad associated with a multicategory
 newtype IW (f :: [k] -> k -> *) (a :: k -> *) (o :: k) = IW { runIW :: forall is. f is o -> Rec a is }
 
--- instance Multicategory f => IComonad (IW f)
-
 instance IFunctor (IW f) where
   imap f (IW g) = IW $ \s -> rmap f (g s)
 
 instance Multicategory f => IComonad (IW f) where
   iextract (IW f) = case f ident of
     a :& RNil -> a
-  iextend (f :: IW f a ~> b) (IW w) = IW $ \s -> go (grade s) s where
-    go :: Rec Proxy is -> f is a1 -> Rec b is
-    go gs s = undefined
-  -- duplicate (W f) = W (\s d -> rmap (\(Atkey a) -> W $ \s' d' -> graft d' in for the corresponding arg of s, then prune the result to that interval) d)
-
+  iextend (f :: IW f a ~> b) (w :: IW f a o) = IW $ \s -> go RNil (grade s) s where
+    go :: forall ls rs. Rec Proxy ls -> Rec Proxy rs -> f (ls ++ rs) o -> Rec b rs
+    go _ RNil _ = RNil
+    go ls (p :& rs) s = f g :& go (rappend ls (p :& RNil)) rs (shift s)
+      where
+        g = IW $ \s' -> prune ls (grade s') rs (runIW w (compose s (appendForest (idents ls) (s' :- idents rs))))
+        prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
+        shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
 --------------------------------------------------------------------------------
 -- * A category over an operad
@@ -472,3 +489,18 @@ instance Multicategory f => IComonad (IW f) where
 -- class (Profunctor p (Forest p) (Oper p), Graded p) => Multicategory p where ident :: p '[a] a ...
 --
 -- now 'compose' is an lmap.
+
+--------------------------------------------------------------------------------
+-- * The operad associated with a monoid
+--------------------------------------------------------------------------------
+
+-- M (MonoidOp m) is isomorphic to Writer m, W (MonoidOp m) is isomorphic to Traced m
+data MonoidOp m :: [()] -> () -> * where
+  MonoidOp :: m -> MonoidOp m '[a] a
+
+instance Graded (MonoidOp m) where
+  grade MonoidOp{} = Proxy :& RNil
+
+instance Monoid m => Multicategory (MonoidOp m) where
+  ident = MonoidOp mempty
+  compose (MonoidOp m1) (MonoidOp m2 :- Nil) = MonoidOp (m1 <> m2)
