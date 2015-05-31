@@ -508,3 +508,21 @@ instance Graded (MonoidOp m) where
 instance Monoid m => Multicategory (MonoidOp m) where
   ident = MonoidOp mempty
   compose (MonoidOp m1) (MonoidOp m2 :- Nil) = MonoidOp (m1 <> m2)
+
+--------------------------------------------------------------------------------
+-- * PROPs
+--------------------------------------------------------------------------------
+
+class PRO (f :: [k] -> [k] -> *) where
+  idpro :: f '[a] '[a]
+  vcomp :: f bs cs -> f as bs -> f as cs
+  hcomp :: f as bs -> f cs ds -> f (as ++ cs) (bs ++ ds)
+
+class PRO f => PROP f where
+  precart :: f bs cs -> Cart as bs -> f as cs
+  postcart :: Cart bs cs -> f as bs -> f as cs
+
+instance Multicategory f => PRO (Forest f) where
+  idpro = ident :- Nil
+  vcomp = o
+  hcomp = appendForest
