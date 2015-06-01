@@ -10,14 +10,30 @@ import Data.Constraint
 import Data.Foldable
 import Data.Functor.Identity
 import Data.Functor.Rep
+import Data.Groupoid
 import Data.Monoid (Monoid(..), (<>))
 import Data.Proxy
 import Data.Semigroupoid
 import Data.Semigroupoid.Ob
 import Data.Traversable
+import Data.Type.Equality
 import GHC.TypeLits
 import Unsafe.Coerce
 import Prelude hiding ((++), id, (.))
+
+--------------------------------------------------------------------------------
+-- * Coloured PROs
+--------------------------------------------------------------------------------
+
+-- | The is really talking about a Category, where @Ob f@ describes the objects.
+--
+-- We can also have multiple objects, so this is really a Coloured PRO.
+--
+-- The case where k = () is a normal PRO
+--
+--
+class Semigroupoid p => PRO (p :: [k] -> [k] -> *) where
+  pro :: p as bs -> p cs ds -> p (as ++ cs) (bs ++ ds)
 
 --------------------------------------------------------------------------------
 -- * (Erasable) Type-Level Lists
@@ -102,11 +118,6 @@ data Forest :: ([k] -> k -> *) -> [k] -> [k] -> * where
 
 infixr 5 :-, :&
 
-appendForest :: Graded f => Forest f as bs -> Forest f cs ds -> Forest f (as ++ cs) (bs ++ ds)
-appendForest Nil rs = rs
-appendForest (l :- ls) rs = case appendAssocAxiom (grade l) (grade ls) (grade rs) of
-  Dict -> l :- appendForest ls rs
-
 foldrForest :: (forall i o is. f i o -> r is -> r (i ++ is)) -> r '[] -> Forest f m n -> r m
 foldrForest _ z Nil = z
 foldrForest f z (a :- as) = f a (foldrForest f z as)
@@ -137,6 +148,11 @@ instance Multicategory f => Semigroupoid (Forest f) where
 instance (Multicategory f, KnownGrade is) => Ob (Forest f) is where
   semiid = idents gradeVal
 
+instance Multicategory f => PRO (Forest f) where
+  pro Nil rs = rs
+  pro (l :- ls) rs = case appendAssocAxiom (grade l) (grade ls) (grade rs) of
+    Dict -> l :- pro ls rs
+
 idents :: Multicategory f => Rec Proxy is -> Forest f is is
 idents (a :& as) = ident :- idents as
 idents RNil      = Nil
@@ -150,6 +166,10 @@ data Swap :: [a] -> [a] -> * where
   Swap :: Swap (a ': b ': bs) (b ': a ': bs)
   Skip :: Swap as bs -> Swap (a ': as) (a ': bs)
 
+flop :: Swap as bs -> Swap bs as
+flop Swap = Swap
+flop (Skip as) = Skip (flop as)
+
 swapRec :: Swap as bs -> Rec f as -> Rec f bs
 swapRec (Skip s) (i :& is)      = i :& swapRec s is
 swapRec Swap     (i :& j :& is) = j :& i :& is
@@ -162,7 +182,12 @@ class Multicategory f => Symmetric f where
   swap :: Swap as bs -> f as o -> f bs o
   {-# MINIMAL swap #-}
 
--- TODO: Cartesian Multicategories
+--------------------------------------------------------------------------------
+-- * Coloured PROPs
+--------------------------------------------------------------------------------
+
+class PRO p => PROP p where
+  prop :: Swap as bs -> p as bs
 
 --------------------------------------------------------------------------------
 -- * Endo
@@ -213,7 +238,6 @@ data Atkey a i j where
 
 amap :: (a -> b) -> Atkey a i j -> Atkey b i j
 amap f (Atkey a) = Atkey (f a)
-
 
 -- The monad attached to an operad. This generalizes the notion of the writer monad to an arbitrary operad
 data M (f :: [()] -> () -> *) (a :: *) where
@@ -394,8 +418,10 @@ instance Symmetric Selector where
   swap Swap      (Tail (Tail bs)) = Tail (Tail bs)
 
 --------------------------------------------------------------------------------
--- * Cartesian Multicategories
+-- * Cartesian Multicategories and Finite-Product Theories
 --------------------------------------------------------------------------------
+
+-- the theory of multisorted equality, acts as a sort of multisorted FinSet^op or multisorted FinBool
 
 data Cart is os where
   Cart :: Rec Proxy is -> Rec (Selector is) os -> Cart is os
@@ -419,6 +445,16 @@ instance Cartesian Endo where
 
 instance Cartesian Selector where
   cart s (Cart _ r) = select r s
+
+-- | Finite Product Theory -- Multisorted Lawvere Theory where the set of objects is all of Ob f itself
+--
+-- <http://ncatlab.org/nlab/show/Lawvere+theory>
+class PROP p => ProductTheory p where
+  prod :: Cart as bs -> p as bs
+
+instance PRO Cart
+instance PROP Cart
+instance ProductTheory Cart
 
 --------------------------------------------------------------------------------
 -- * Variants
@@ -448,7 +484,7 @@ instance Multicategory f => Comonad (W f) where
     go ls (p :& rs) s = g :& go (rappend ls (p :& RNil)) rs (shift s)
       where
         g = Coatkey $ f $ W $ \s' ->
-          prune ls (grade s') rs (runW w (compose s (appendForest (idents ls) (s' :- idents rs))))
+          prune ls (grade s') rs (runW w (compose s (pro (idents ls) (s' :- idents rs))))
         prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
         shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
@@ -476,23 +512,14 @@ instance Multicategory f => IComonad (IW f) where
     go _ RNil _ = RNil
     go ls (p :& rs) s = f g :& go (rappend ls (p :& RNil)) rs (shift s)
       where
-        g = IW $ \s' -> prune ls (grade s') rs (runIW w (compose s (appendForest (idents ls) (s' :- idents rs))))
+        g = IW $ \s' -> prune ls (grade s') rs (runIW w (compose s (pro (idents ls) (s' :- idents rs))))
         prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
         shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
 --------------------------------------------------------------------------------
 -- * A category over an operad
 --------------------------------------------------------------------------------
--- http://ncatlab.org/nlab/show/category+over+an+operad
-
--- we could model a category with object constraints with something simple like:
-
--- class (Semigroupoid q, Semigroupoid r) => Profunctor p q r | p -> q r where
---   dimap :: q a b -> r c d -> p b c -> p a d
-
--- class (Profunctor p (Forest p) (Oper p), Graded p) => Multicategory p where ident :: p '[a] a ...
---
--- now 'compose' is an lmap.
+-- TODO: http://ncatlab.org/nlab/show/category+over+an+operad
 
 --------------------------------------------------------------------------------
 -- * The operad associated with a monoid
@@ -510,19 +537,51 @@ instance Monoid m => Multicategory (MonoidOp m) where
   compose (MonoidOp m1) (MonoidOp m2 :- Nil) = MonoidOp (m1 <> m2)
 
 --------------------------------------------------------------------------------
--- * PROPs
+-- * Natural numbers
 --------------------------------------------------------------------------------
 
-class PRO (f :: [k] -> [k] -> *) where
-  idpro :: f '[a] '[a]
-  vcomp :: f bs cs -> f as bs -> f as cs
-  hcomp :: f as bs -> f cs ds -> f (as ++ cs) (bs ++ ds)
 
-class PRO f => PROP f where
-  precart :: f bs cs -> Cart as bs -> f as cs
-  postcart :: Cart bs cs -> f as bs -> f as cs
+-- M N -- is the finite list monad
+-- W N -- is the infinite stream comonad (Sum Natural -> a)
 
-instance Multicategory f => PRO (Forest f) where
-  idpro = ident :- Nil
-  vcomp = o
-  hcomp = appendForest
+-- | natural number multicategory
+data N :: [k] -> k -> * where
+  N :: Rec ((:~:) i) is -> N is i
+
+instance Graded N where
+  grade (N as) = rmap (const Proxy) as
+
+instance Multicategory N where
+  ident = N (Refl :& RNil)
+
+instance Symmetric N
+instance Cartesian N
+
+--------------------------------------------------------------------------------
+-- * Core of a Category
+--------------------------------------------------------------------------------
+
+-- | The core of a category is the largest sub-groupoid
+data Core p as bs = Core { hither :: p as bs, yon :: p bs as }
+
+instance Semigroupoid p => Semigroupoid (Core p) where
+  o (Core e f) (Core g h) = Core (o e g) (o h f)
+
+instance Category p => Category (Core p) where
+  id = Core id id
+  Core e f . Core g h = Core (e . g) (h . f)
+
+instance Ob p a => Ob (Core p) a where
+  semiid = Core semiid semiid
+
+instance Semigroupoid p => Groupoid (Core p) where
+  inv (Core f g) = Core g f
+
+instance PRO p => PRO (Core p) where
+  pro (Core as bs) (Core cs ds) = Core (pro as cs) (pro bs ds)
+
+instance PROP p => PROP (Core p) where
+  prop s = Core (prop s) (prop (flop s))
+
+-- the symmetric groupoid Sigma is the symmetric groupoid, the core of a coloured version of FinSet^op
+type Sym = Core Cart
