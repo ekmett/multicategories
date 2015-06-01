@@ -171,26 +171,31 @@ idents RNil      = Nil
 
 -- | generators for the symmetric groupoid Sigma_k
 data Swap :: [a] -> [a] -> * where
-  Swap :: Swap (a ': b ': bs) (b ': a ': bs)
+  Swap :: Rec Proxy bs -> Swap (a ': b ': bs) (b ': a ': bs)
   Skip :: Swap as bs -> Swap (a ': as) (a ': bs)
 
+instance Graded Swap where
+  grade (Swap as) = Proxy :& Proxy :& as
+  grade (Skip as) = Proxy :& grade as
+
 flop :: Swap as bs -> Swap bs as
-flop Swap = Swap
+flop (Swap bs) = Swap bs
 flop (Skip as) = Skip (flop as)
 
-swapRec :: Swap as bs -> Rec f as -> Rec f bs
-swapRec (Skip s) (i :& is)      = i :& swapRec s is
-swapRec Swap     (i :& j :& is) = j :& i :& is
+swapRec :: Rec f as -> Swap bs as -> Rec f bs
+swapRec (i :& is)      (Skip s) = i :& swapRec is s
+swapRec (i :& j :& is) (Swap _) = j :& i :& is
 
-unswapRec :: Swap bs as -> Rec f as -> Rec f bs
-unswapRec (Skip s) (i :& is)      = i :& unswapRec s is
-unswapRec Swap     (i :& j :& is) = j :& i :& is
+unswapRec :: Rec f as -> Swap as bs -> Rec f bs
+unswapRec (i :& is)      (Skip s) = i :& unswapRec is s
+unswapRec (i :& j :& is) (Swap _) = j :& i :& is
 
 class Multicategory f => Symmetric f where
   swap :: f bs o -> Swap as bs -> f as o
+  -- TODO: implement in terms of sigma
 
   sigma :: f bs o -> Sigma as bs -> f bs o
-  -- implement in terms of pairwise swaps using modified bubblesort
+  -- TODO: implement in terms of pairwise swaps using modified bubblesort
 
 data Coselector a as bs where
   Cohead :: Rec Proxy as -> Coselector a (a ': as) as
@@ -201,18 +206,35 @@ data Sigma as bs where
   SNil :: Sigma '[] '[]
   SCons :: Coselector a as bs -> Sigma as bs -> Sigma as (a ': bs)
 
+coheads :: Rec Proxy as -> Sigma as as
+coheads RNil = SNil
+-- coheads aas@(Proxy :& as) = Cohead as `SCons` coheads as
+
 instance Semigroupoid Sigma
 instance Groupoid Sigma
 instance PRO Sigma
-instance PROP Sigma
-instance KnownGrade as => Ob Sigma as
-  
+instance Graded Sigma where
+
+instance PROP Sigma where
+{-
+  prop s = go (grade s) s where
+    go :: Rec Proxy as -> Swap as bs -> Sigma as bs
+    go (Proxy :& as) (Skip s) = SCons _ {- (Cohead as) -} (go s)
+    -- go (a :& b :& bs) Swap     = SCons (Cotail (Cohead bs)) $ SCons (Cohead bs) $ coheads bs
+-}
+  props = id
+
+instance KnownGrade as => Ob Sigma as where
+  semiid = coheads gradeVal
+
 --------------------------------------------------------------------------------
 -- * Coloured PROPs
 --------------------------------------------------------------------------------
 
 class PRO p => PROP p where
-  prop :: Swap as bs -> p as bs
+  -- @prop = props . prop@
+  prop  :: Swap as bs -> p as bs  -- swap once
+  props :: Sigma as bs -> p as bs -- swap
 
 --------------------------------------------------------------------------------
 -- * Endo
@@ -234,7 +256,7 @@ instance Multicategory Endo where
     go Nil RNil = RNil
 
 instance Symmetric Endo where -- TODO
-  swap (Endo g f) s = Endo (unswapRec s g) (f . swapRec s)
+  swap (Endo g f) s = Endo (swapRec g s) $ \x -> f (unswapRec x s)
 
 --------------------------------------------------------------------------------
 -- * Free multicategory
@@ -436,11 +458,11 @@ instance Multicategory Selector where
     go (Head cs) = Head (rappend cs (grade bs))
 
 instance Symmetric Selector where
-  swap (Head bs)        (Skip as) = Head (unswapRec as bs)
-  swap (Head (_ :& bs)) Swap      = Tail (Head bs)
+  swap (Head bs)        (Skip as) = Head (swapRec bs as)
+  swap (Head (_ :& bs)) Swap{}    = Tail (Head bs)
   swap (Tail bs)        (Skip as) = Tail (swap bs as)
-  swap (Tail (Head bs)) Swap      = Head (Proxy :& bs)
-  swap (Tail (Tail bs)) Swap      = Tail (Tail bs)
+  swap (Tail (Head bs)) Swap{}    = Head (Proxy :& bs)
+  swap (Tail (Tail bs)) Swap{}    = Tail (Tail bs)
 
 --------------------------------------------------------------------------------
 -- * Cartesian Multicategories and Finite-Product Theories
