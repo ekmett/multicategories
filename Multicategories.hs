@@ -23,6 +23,7 @@ import Data.Groupoid
 import Data.Monoid (Monoid(..), (<>))
 import Data.Proxy
 import Data.Semigroupoid
+import Data.Semigroupoid.Dual
 import Data.Semigroupoid.Ob
 import Data.Traversable
 import Data.Type.Equality
@@ -493,7 +494,13 @@ instance Cartesian Endo where
 instance Cartesian Selector where
   cart s (Cart _ r) = select r s
 
--- | Finite Product Theory -- Multisorted Lawvere Theory where the set of objects is all of Ob f itself
+-- FinSet^op
+type FinBool = (Cart :: [()] -> [()] -> *)
+
+-- FinSet
+type FinSet = Dual FinBool
+
+-- | Finite Product Theory -- Multisorted Lawvere Theory where the set of objects is all of Ob p itself
 --
 -- <http://ncatlab.org/nlab/show/Lawvere+theory>
 class PROP p => ProductTheory p where
