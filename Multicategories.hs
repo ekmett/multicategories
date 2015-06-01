@@ -187,8 +187,10 @@ unswapRec (Skip s) (i :& is)      = i :& unswapRec s is
 unswapRec Swap     (i :& j :& is) = j :& i :& is
 
 class Multicategory f => Symmetric f where
-  swap :: Swap as bs -> f as o -> f bs o
-  {-# MINIMAL swap #-}
+  swap :: f bs o -> Swap as bs -> f as o
+
+  sigma :: f bs o -> Sigma as bs -> f bs o
+  -- implement in terms of pairwise swaps using modified bubblesort
 
 data Coselector a as bs where
   Cohead :: Rec Proxy as -> Coselector a (a ': as) as
@@ -232,7 +234,7 @@ instance Multicategory Endo where
     go Nil RNil = RNil
 
 instance Symmetric Endo where -- TODO
-  swap s (Endo g f) = Endo (swapRec s g) (f . unswapRec s)
+  swap (Endo g f) s = Endo (unswapRec s g) (f . swapRec s)
 
 --------------------------------------------------------------------------------
 -- * Free multicategory
@@ -434,11 +436,11 @@ instance Multicategory Selector where
     go (Head cs) = Head (rappend cs (grade bs))
 
 instance Symmetric Selector where
-  swap (Skip as) (Head bs)        = Head (swapRec as bs)
-  swap Swap      (Head (_ :& bs)) = Tail (Head bs)
-  swap (Skip as) (Tail bs)        = Tail (swap as bs)
-  swap Swap      (Tail (Head bs)) = Head (Proxy :& bs)
-  swap Swap      (Tail (Tail bs)) = Tail (Tail bs)
+  swap (Head bs)        (Skip as) = Head (unswapRec as bs)
+  swap (Head (_ :& bs)) Swap      = Tail (Head bs)
+  swap (Tail bs)        (Skip as) = Tail (swap bs as)
+  swap (Tail (Head bs)) Swap      = Head (Proxy :& bs)
+  swap (Tail (Tail bs)) Swap      = Tail (Tail bs)
 
 --------------------------------------------------------------------------------
 -- * Cartesian Multicategories and Finite-Product Theories
