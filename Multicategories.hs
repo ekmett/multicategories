@@ -1,4 +1,13 @@
-{-# LANGUAGE DataKinds, RankNTypes, TypeOperators, KindSignatures, GADTs, ScopedTypeVariables, PolyKinds, TypeFamilies, FlexibleInstances, MultiParamTypeClasses #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PolyKinds #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 module Multicategories where
 
 import Control.Applicative hiding (Const(..))
@@ -30,8 +39,7 @@ import Prelude hiding ((++), id, (.))
 -- We can also have multiple objects, so this is really a Coloured PRO.
 --
 -- The case where k = () is a normal PRO
---
---
+
 class Semigroupoid p => PRO (p :: [k] -> [k] -> *) where
   pro :: p as bs -> p cs ds -> p (as ++ cs) (bs ++ ds)
 
@@ -182,6 +190,21 @@ class Multicategory f => Symmetric f where
   swap :: Swap as bs -> f as o -> f bs o
   {-# MINIMAL swap #-}
 
+data Coselector a as bs where
+  Cohead :: Rec Proxy as -> Coselector a (a ': as) as
+  Cotail :: Coselector a as bs -> Coselector a (b ': as) (b ': bs)
+
+-- The symmetric groupoid
+data Sigma as bs where
+  SNil :: Sigma '[] '[]
+  SCons :: Coselector a as bs -> Sigma as bs -> Sigma as (a ': bs)
+
+instance Semigroupoid Sigma
+instance Groupoid Sigma
+instance PRO Sigma
+instance PROP Sigma
+instance KnownGrade as => Ob Sigma as
+  
 --------------------------------------------------------------------------------
 -- * Coloured PROPs
 --------------------------------------------------------------------------------
