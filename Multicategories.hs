@@ -44,6 +44,9 @@ import Prelude hiding ((++), id, (.))
 class Semigroupoid p => PRO (p :: [k] -> [k] -> *) where
   pro :: p as bs -> p cs ds -> p (as ++ cs) (bs ++ ds)
 
+instance PRO p => PRO (Dual p) where
+  pro (Dual p) (Dual q) = Dual (pro p q)
+
 --------------------------------------------------------------------------------
 -- * (Erasable) Type-Level Lists
 --------------------------------------------------------------------------------
@@ -236,6 +239,9 @@ class PRO p => PROP p where
   -- @prop = props . prop@
   prop  :: Swap as bs -> p as bs  -- swap once
   props :: Sigma as bs -> p as bs -- swap
+
+instance PROP p => PROP (Dual p) where
+  prop = Dual . prop . flop
 
 --------------------------------------------------------------------------------
 -- * Endo
@@ -594,7 +600,6 @@ instance Monoid m => Multicategory (MonoidOp m) where
 -- * Natural numbers
 --------------------------------------------------------------------------------
 
-
 -- M N -- is the finite list monad
 -- W N -- is the infinite stream comonad (Sum Natural -> a)
 
@@ -638,4 +643,4 @@ instance PROP p => PROP (Core p) where
   prop s = Core (prop s) (prop (flop s))
 
 -- the symmetric groupoid Sigma is the symmetric groupoid, the core of a coloured version of FinSet^op
-type Sym = Core Cart
+-- type Sigma = Core Cart
