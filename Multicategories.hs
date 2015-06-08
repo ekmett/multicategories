@@ -8,6 +8,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+-- | 
+-- Multicategories and Polycategories
 module Multicategories where
 
 import Control.Applicative hiding (Const(..))
@@ -41,6 +43,7 @@ import Prelude hiding ((++), id, (.))
 --
 -- The case where k = () is a normal PRO
 
+-- | A coloured PRO is a polycategory with a form of horizontal composition.
 class Semigroupoid p => PRO (p :: [k] -> [k] -> *) where
   pro :: p as bs -> p cs ds -> p (as ++ cs) (bs ++ ds)
 
@@ -88,10 +91,11 @@ splitRec RNil    as        = (RNil, as)
 splitRec (_ :& is) (a :& as) = case splitRec is as of
   (l,r) -> (a :& l, r)
 
-splitRec' :: Rec f is -> Rec f js -> Rec g (is ++ js) -> (Rec g is, Rec g js)
-splitRec' RNil      js as        = (RNil, as)
-splitRec' (_ :& is) js (a :& as) = case splitRec' is js as of
-  (l,r) -> (a :& l, r)
+takeRec :: forall f g h is js. Rec f is -> Rec g js -> Rec h (is ++ js) -> Rec h is
+takeRec is js ijs = fst $ (splitRec is ijs :: (Rec h is, Rec h js))
+
+dropRec :: Rec f is -> Rec g (is ++ js) -> Rec g js
+dropRec is ijs = snd $ splitRec is ijs
 
 foldrRec :: (forall i is. f i -> r is -> r (i ': is)) -> r '[] -> Rec f is -> r is
 foldrRec _ z RNil = z
@@ -545,7 +549,7 @@ instance Multicategory f => Comonad (W f) where
       where
         g = Coatkey $ f $ W $ \s' ->
           prune ls (grade s') rs (runW w (compose s (pro (idents ls) (s' :- idents rs))))
-        prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
+        prune ls is rs = takeRec is rs . dropRec ls
         shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
 --------------------------------------------------------------------------------
@@ -573,7 +577,7 @@ instance Multicategory f => IComonad (IW f) where
     go ls (p :& rs) s = f g :& go (rappend ls (p :& RNil)) rs (shift s)
       where
         g = IW $ \s' -> prune ls (grade s') rs (runIW w (compose s (pro (idents ls) (s' :- idents rs))))
-        prune ls is rs = fst . splitRec' is rs . snd . splitRec' ls (rappend is rs)
+        prune ls is rs = takeRec is rs . dropRec ls
         shift s = case appendAssocAxiom ls (p :& RNil) rs of Dict -> s
 
 --------------------------------------------------------------------------------
